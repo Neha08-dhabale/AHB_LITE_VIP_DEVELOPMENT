@@ -1,0 +1,3061 @@
+`ifndef AHB_LITE_RWR_SEQ_SV
+`define AHB_LITE_RWR_SEQ_SV
+
+class ahb_lite_rwr_seq extends ahb_lite_base_seq;
+    
+    `uvm_object_utils(ahb_lite_rwr_seq)
+    
+    rand bit [31:0] test_addr;
+    rand bit [31:0] write_data;
+    bit [31:0] read_data1, read_data2;
+    
+    constraint c_addr { test_addr[1:0] == 2'b00; }
+    
+    function new(string name = "ahb_lite_rwr_seq");
+        super.new(name);
+    endfunction
+    
+    task body();
+        `uvm_info("SEQ", $sformatf("RWR Test at 0x%08h", test_addr), UVM_LOW)
+        
+        // Read initial value
+        send_read(test_addr, read_data1);
+        `uvm_info("SEQ", $sformatf("Initial read: 0x%08h", read_data1), UVM_MEDIUM)
+        
+        // Write new value
+        send_write(test_addr, write_data);
+        `uvm_info("SEQ", $sformatf("Wrote: 0x%08h", write_data), UVM_MEDIUM)
+        
+        // Read back
+        send_read(test_addr, read_data2);
+        `uvm_info("SEQ", $sformatf("Read back: 0x%08h", read_data2), UVM_MEDIUM)
+        
+        // Check
+        if (read_data2 === write_data) begin
+            `uvm_info("SEQ", "â RWR Test PASSED", UVM_LOW)
+        end else begin
+            `uvm_error("SEQ", $sformatf("RWR Test FAILED: Expected 0x%08h, Got 0x%08h", 
+                      write_data, read_data2))
+        end
+    endtask
+
+endclass : ahb_lite_rwr_seq
+
+`endif
+`ifndef AHB_LITE_RANDOM_SEQ_SV
+`define AHB_LITE_RANDOM_SEQ_SV
+
+class ahb_lite_random_seq extends ahb_lite_base_seq;
+    
+    `uvm_object_utils(ahb_lite_random_seq)
+    
+    rand int num_transactions;
+    rand bit [31:0] addr_min;
+    rand bit [31:0] addr_max;
+    
+    constraint c_num { num_transactions inside {[20:50]}; }
+    constraint c_addr_range { 
+        addr_min[1:0] == 2'b00;
+        addr_max[1:0] == 2'b00;
+        addr_max > addr_min;
+    }
+    
+    function new(string name = "ahb_lite_random_seq");
+        super.new(name);
+    endfunction
+    
+    task body();
+        bit [31:0] addr, data;
+        bit write;
+        
+        `uvm_info("SEQ", $sformatf("Random sequence: %0d transactions", 
+                  num_transactions), UVM_LOW)
+        
+        for (int i = 0; i < num_transactions; i++) begin
+            // Random address in range
+            addr = $urandom_range(addr_max, addr_min);
+            addr[1:0] = 2'b00;  // Word-aligned
+            
+            // Random read or write
+            write = $urandom_range(1, 0);
+            
+            if (write) begin
+                data = $urandom();
+                send_write(addr, data);
+            end else begin
+                send_read(addr, data);
+            end
+        end
+        
+        `uvm_info("SEQ", "Random sequence complete", UVM_LOW)
+    endtask
+
+endclass : ahb_lite_random_seq
+
+`endif
+
+`ifndef AHB_LITE_READ_SEQ_SV
+`define AHB_LITE_READ_SEQ_SV
+
+class ahb_lite_read_seq extends ahb_lite_base_seq;
+    
+    `uvm_object_utils(ahb_lite_read_seq)
+    
+    rand bit [31:0] start_addr;
+    rand int num_reads;
+    
+    constraint c_addr { start_addr[1:0] == 2'b00; }
+    constraint c_num { num_reads inside {[8:32]}; }
+    
+    function new(string name = "ahb_lite_read_seq");
+        super.new(name);
+    endfunction
+    
+    task body();
+    bit [31:0] addr;
+    ahb_lite_seq_item req;
+    
+    `uvm_info("SEQ", $sformatf("Starting %0d pipelined reads from 0x%08h", 
+              num_reads, start_addr), UVM_LOW)
+    
+    for (int i = 0; i < num_reads; i++) begin
+        addr = start_addr + (i * 4);
+        
+        // Create transaction
+        req = ahb_lite_seq_item::type_id::create($sformatf("req_%0d", i));
+        
+        start_item(req);
+        
+        // Use your make_read() function - it sets all fields correctly!
+        req.make_read(addr);
+        
+        finish_item(req);
+    end
+    
+    `uvm_info("SEQ", "Pipelined sequence complete", UVM_LOW)
+endtask
+endclass : ahb_lite_read_seq
+
+`endif
+`ifndef AHB_LITE_CACHE_SEQ_SV
+`define AHB_LITE_CACHE_SEQ_SV
+
+class ahb_lite_cache_seq extends ahb_lite_base_seq;
+    
+    `uvm_object_utils(ahb_lite_cache_seq)
+    
+    rand bit [31:0] base_addr;
+    
+    constraint c_addr { base_addr[1:0] == 2'b00; }
+    
+    function new(string name = "ahb_lite_cache_seq");
+        super.new(name);
+    endfunction
+    
+task body();
+    bit [31:0] data;
+
+    // LINE_SIZE=16 bytes = 4 words per cache line
+    // Only loop i=1 to 3 to stay within the SAME cache line
+    
+    `uvm_info("SEQ", "First access (expect MISS)...", UVM_LOW)
+    send_read(base_addr, data);
+
+    `uvm_info("SEQ", "Second access same addr (expect HIT)...", UVM_LOW)
+    send_read(base_addr, data);
+
+    `uvm_info("SEQ", "Sequential accesses in same line (3 more words)...", UVM_LOW)
+    for (int i = 1; i < 7; i++) begin       // â was 8, fix to 4 for LINE_SIZE=16
+        send_read(base_addr + (i*4), data);  // covers +4,+8,+12 = stays in line â
+    end
+
+    `uvm_info("SEQ", "Access to next cache line (expect MISS)...", UVM_LOW)
+    send_read(base_addr + 32'h20, data);     // â +16 = next line boundary
+
+    `uvm_info("SEQ", "Access different region (expect MISS)...", UVM_LOW)
+    send_read(base_addr + 32'h1000, data);
+endtask
+    
+endclass : ahb_lite_cache_seq
+
+`endif
+`ifndef AHB_LITE_WRITE_SEQ_SV
+`define AHB_LITE_WRITE_SEQ_SV
+
+class ahb_lite_write_seq extends ahb_lite_base_seq;
+    
+    `uvm_object_utils(ahb_lite_write_seq)
+    
+    rand bit [31:0] start_addr;
+    rand int num_writes;
+    rand bit [31:0] data_pattern;
+    
+    constraint c_addr { 
+        start_addr[1:0] == 2'b00; 
+    }
+    
+    constraint c_num { 
+        num_writes inside {[1:100]}; 
+    }
+    
+    function new(string name = "ahb_lite_write_seq");
+        super.new(name);
+    endfunction
+    
+    task body();
+        bit [31:0] addr, data;
+        
+        `uvm_info("SEQ", $sformatf("Starting %0d writes from 0x%08h", 
+                  num_writes, start_addr), UVM_LOW)
+        
+        for (int i = 0; i < num_writes; i++) begin
+            addr = start_addr + (i * 4);
+            data = data_pattern + i;
+            send_write(addr, data);
+        end
+        
+        `uvm_info("SEQ", "Write sequence complete", UVM_LOW)
+    endtask
+
+endclass
+
+`endif
+`ifndef AHB_LITE_BASE_SEQ_SV
+`define AHB_LITE_BASE_SEQ_SV
+
+class ahb_lite_base_seq extends uvm_sequence #(ahb_lite_seq_item);
+    
+    `uvm_object_utils(ahb_lite_base_seq)
+    
+    function new(string name = "ahb_lite_base_seq");
+        super.new(name);
+    endfunction
+    
+    // Helper: Send a read transaction
+    task send_read(input bit [31:0] in_addr, output bit [31:0] out_data);
+        ahb_lite_seq_item item;
+        bit [31:0] addr_val;  // Local variable visible to constraints
+        
+        addr_val = in_addr;  // Copy parameter to local variable
+        
+        item = ahb_lite_seq_item::type_id::create("item");
+        start_item(item);
+        assert(item.randomize() with {
+            write      == 1'b0;
+            trans_type == NONSEQ;
+            addr       == addr_val;  // Use local variable
+            size       == SIZE_WORD;
+        });
+        finish_item(item);
+        out_data = item.data;
+        `uvm_info("SEQ", $sformatf("Read [0x%08h] = 0x%08h (waits=%0d)", 
+                  item.addr, item.data, item.wait_cycles), UVM_HIGH)
+    endtask
+  
+    // Helper: Send a write transaction
+    task send_write(input bit [31:0] in_addr, input bit [31:0] in_data);
+        ahb_lite_seq_item txn;
+        bit [31:0] addr_val;  // Local variable visible to constraints
+        bit [31:0] data_val;  // Local variable visible to constraints
+        
+        addr_val = in_addr;  // Copy parameter to local variable
+        data_val = in_data;  // Copy parameter to local variable
+        
+        txn = ahb_lite_seq_item::type_id::create("txn");
+        start_item(txn);
+        assert(txn.randomize() with {
+            trans_type == NONSEQ;
+            write      == 1'b1;
+            addr       == addr_val;  // Use local variable
+            data       == data_val;  // Use local variable
+            size       == SIZE_WORD;
+        });
+        finish_item(txn);
+        `uvm_info("SEQ", $sformatf("Write[0x%08h] = 0x%08h (waits=%0d)", 
+                  txn.addr, txn.data, txn.wait_cycles), UVM_HIGH)
+    endtask
+
+endclass
+
+`endif
+`ifndef AHB_LITE_TYPES_SV
+`define AHB_LITE_TYPES_SV
+
+typedef enum logic [1:0] {
+    IDLE   = 2'b00,
+    BUSY   = 2'b01,
+    NONSEQ = 2'b10,
+    SEQ    = 2'b11
+} ahb_htrans_e;
+
+typedef enum logic [2:0] {
+    SIZE_BYTE     = 3'b000,
+    SIZE_HALFWORD = 3'b001,
+    SIZE_WORD     = 3'b010,
+    SIZE_DWORD    = 3'b011
+} ahb_hsize_e;
+
+typedef enum logic [2:0] {
+    SINGLE = 3'b000,
+    INCR   = 3'b001,
+    WRAP4  = 3'b010,
+    INCR4  = 3'b011
+} ahb_hburst_e;
+
+typedef enum logic {
+    OKAY  = 1'b0,
+    ERROR = 1'b1
+} ahb_hresp_e;
+
+typedef enum {
+    AHB_MASTER,
+    AHB_SLAVE,
+    AHB_PASSIVE
+} ahb_agent_mode_e;
+
+`endif
+
+`ifndef AHB_LITE_SEQ_ITEM_SV
+`define AHB_LITE_SEQ_ITEM_SV
+
+class ahb_lite_seq_item extends uvm_sequence_item;
+    
+    rand bit          write;
+    rand bit [31:0]   addr;
+    rand ahb_htrans_e trans_type;
+    rand ahb_hsize_e  size;
+    rand ahb_hburst_e burst;
+    rand bit [3:0]    prot;
+    rand bit [31:0]   data;
+    
+    ahb_hresp_e       resp;
+    int               wait_cycles;
+    
+    constraint c_valid_trans {
+        trans_type inside {NONSEQ, SEQ, IDLE};
+    }
+    
+    constraint c_valid_size {
+        size == SIZE_WORD;
+    }
+    
+    constraint c_valid_burst {
+        burst == SINGLE;
+    }
+    
+    constraint c_aligned_addr {
+        addr[1:0] == 2'b00;
+    }
+    
+    `uvm_object_utils_begin(ahb_lite_seq_item)
+        `uvm_field_int(write, UVM_DEFAULT)
+        `uvm_field_int(addr, UVM_DEFAULT | UVM_HEX)
+        `uvm_field_enum(ahb_htrans_e, trans_type, UVM_DEFAULT)
+        `uvm_field_int(data, UVM_DEFAULT | UVM_HEX)
+        `uvm_field_enum(ahb_hresp_e, resp, UVM_DEFAULT)
+        `uvm_field_int(wait_cycles, UVM_DEFAULT)
+    `uvm_object_utils_end
+    
+    function new(string name = "ahb_lite_seq_item");
+        super.new(name);
+    endfunction
+    
+function void make_read(bit [31:0] address);
+    write      = 0;
+    addr       = address;
+    trans_type = NONSEQ;
+    size       = SIZE_WORD;    // 3'b010 = 32-bit
+    burst      = SINGLE;       // 3'b000
+    prot       = 4'b0011;      // cacheable
+endfunction
+        
+    function void make_write(bit [31:0] address, bit [31:0] write_data);
+        write = 1;
+        addr = address;
+        data = write_data;
+        trans_type = NONSEQ;
+    endfunction
+
+endclass : ahb_lite_seq_item
+
+`endif
+`ifndef AHB_LITE_CONFIG_SV
+`define AHB_LITE_CONFIG_SV
+
+class ahb_lite_config extends uvm_object;
+    
+    bit is_active = 1;
+    ahb_agent_mode_e agent_mode = AHB_MASTER;
+    
+    int addr_width = 32;
+    int data_width = 32;
+    int max_wait_cycles = 200;
+    
+    bit enable_coverage = 1;
+    bit enable_protocol_checks = 1;
+    
+    bit [31:0] addr_min = 32'h0000_0000;
+    bit [31:0] addr_max = 32'h00FF_FFFF;
+    
+    `uvm_object_utils_begin(ahb_lite_config)
+        `uvm_field_int(is_active, UVM_DEFAULT)
+        `uvm_field_enum(ahb_agent_mode_e, agent_mode, UVM_DEFAULT)
+        `uvm_field_int(enable_coverage, UVM_DEFAULT)
+        `uvm_field_int(enable_protocol_checks, UVM_DEFAULT)
+    `uvm_object_utils_end
+    
+    function new(string name = "ahb_lite_config");
+        super.new(name);
+    endfunction
+
+endclass : ahb_lite_config
+
+`endif
+
+
+
+`ifndef AHB_LITE_SEQUENCER_SV
+`define AHB_LITE_SEQUENCER_SV
+
+typedef uvm_sequencer #(ahb_lite_seq_item) ahb_lite_sequencer;
+
+`endif
+`ifndef AHB_LITE_AGENT_SV
+`define AHB_LITE_AGENT_SV
+
+class ahb_lite_agent extends uvm_agent;
+    
+    `uvm_component_utils(ahb_lite_agent)
+    
+    ahb_lite_driver      driver;
+    ahb_lite_monitor     monitor;
+    ahb_lite_sequencer   sequencer;
+    ahb_lite_config      cfg;
+    uvm_analysis_port #(ahb_lite_seq_item) ap;
+    
+    function new(string name = "ahb_lite_agent", uvm_component parent = null);
+        super.new(name, parent);
+    endfunction
+    
+    function void build_phase(uvm_phase phase);
+        super.build_phase(phase);
+        
+        if (!uvm_config_db#(ahb_lite_config)::get(this, "", "cfg", cfg)) begin
+            `uvm_info("NOCONFIG", "Using default config", UVM_LOW)
+            cfg = ahb_lite_config::type_id::create("cfg");
+        end
+        
+        monitor = ahb_lite_monitor::type_id::create("monitor", this);
+        
+        if (cfg.is_active == UVM_ACTIVE) begin
+            driver = ahb_lite_driver::type_id::create("driver", this);
+            sequencer = ahb_lite_sequencer::type_id::create("sequencer", this);
+        end
+        
+        uvm_config_db#(ahb_lite_config)::set(this, "*", "cfg", cfg);
+    endfunction
+    
+    function void connect_phase(uvm_phase phase);
+        super.connect_phase(phase);
+        if (cfg.is_active == UVM_ACTIVE)
+            driver.seq_item_port.connect(sequencer.seq_item_export);
+        ap = monitor.ap;
+    endfunction
+
+endclass : ahb_lite_agent
+
+`endif
+
+`ifndef AHB_LITE_MONITOR_SV
+`define AHB_LITE_MONITOR_SV
+
+class ahb_lite_monitor extends uvm_monitor;
+    
+    `uvm_component_utils(ahb_lite_monitor)
+    
+   // virtual ahb_lite_if vif;
+    virtual master_ahb_if vif;
+    ahb_lite_config cfg;
+    uvm_analysis_port #(ahb_lite_seq_item) ap;
+    
+    // State tracking
+    bit               addr_phase_valid;
+    bit               in_data_phase;
+    bit [31:0]        captured_addr;
+    bit               captured_write;
+    ahb_htrans_e      captured_trans;
+    ahb_hsize_e       captured_size;
+    ahb_hburst_e      captured_burst;
+    bit [3:0]         captured_prot;
+    bit [31:0]        captured_wdata;  // NEW: capture write data early!
+    
+    function new(string name = "ahb_lite_monitor", uvm_component parent = null);
+        super.new(name, parent);
+        ap = new("ap", this);
+    endfunction
+    
+    function void build_phase(uvm_phase phase);
+        super.build_phase(phase);
+        //if (!uvm_config_db#(virtual ahb_lite_if)::get(this, "", "vif", vif))
+	if (!uvm_config_db#(virtual master_ahb_if)::get(this, "", "vif", vif))
+            `uvm_fatal("NOVIF", "Virtual interface not found")
+        if (!uvm_config_db#(ahb_lite_config)::get(this, "", "cfg", cfg))
+            cfg = ahb_lite_config::type_id::create("cfg");
+    endfunction
+
+    task run_phase(uvm_phase phase);
+        int wait_count;
+
+        forever begin
+            @(vif.monitor_cb);
+
+            if (!vif.HRESETn) begin
+                addr_phase_valid = 0;
+                in_data_phase = 0;
+                wait_count = 0;
+                continue;
+            end
+
+            // STATE 1: Data phase completion
+            if (in_data_phase && vif.monitor_cb.HREADYOUT) begin
+                ahb_lite_seq_item txn = ahb_lite_seq_item::type_id::create("txn");
+                txn.addr = captured_addr;
+                txn.write = captured_write;
+                txn.trans_type = captured_trans;
+                txn.size = captured_size;
+                txn.burst = captured_burst;
+                txn.prot = captured_prot;
+                txn.resp = ahb_hresp_e'(vif.monitor_cb.HRESP);
+                txn.wait_cycles = wait_count;
+                
+                // CRITICAL: For writes, use CAPTURED data (from data phase start)
+                // For reads, sample HRDATA NOW (slave just drove it)
+                if (captured_write)
+                    txn.data = captured_wdata;  // Use captured value!
+                else
+                    txn.data = vif.monitor_cb.HRDATA;
+                
+                ap.write(txn);
+
+                `uvm_info("MONITOR", $sformatf("Collected: %s 0x%08h = 0x%08h (waits=%0d)",
+                          captured_write ? "WRITE" : " READ",
+                          txn.addr, txn.data, txn.wait_cycles), UVM_MEDIUM)
+
+                // Clear state
+                addr_phase_valid = 0;
+                in_data_phase = 0;
+                wait_count = 0;
+
+                // Check for pipelined new address
+                if (vif.monitor_cb.HSEL &&
+                    vif.monitor_cb.HTRANS[1] &&
+                    vif.monitor_cb.HREADY) begin
+                    captured_addr = vif.monitor_cb.HADDR;
+                    captured_write = vif.monitor_cb.HWRITE;
+                    captured_trans = ahb_htrans_e'(vif.monitor_cb.HTRANS);
+                    captured_size = ahb_hsize_e'(vif.monitor_cb.HSIZE);
+                    captured_burst = ahb_hburst_e'(vif.monitor_cb.HBURST);
+                    captured_prot = vif.monitor_cb.HPROT;
+                    addr_phase_valid = 1;
+                    in_data_phase = 0;
+                end
+                
+            // STATE 2: Entering data phase (capture HWDATA for writes!)
+            end else if (addr_phase_valid && !in_data_phase) begin
+                in_data_phase = 1;
+                wait_count = 0;
+                
+                // CRITICAL: Capture HWDATA at START of data phase!
+                if (captured_write)
+                    captured_wdata = vif.monitor_cb.HWDATA;
+                
+            // STATE 3: Counting waits
+            end else if (in_data_phase && !vif.monitor_cb.HREADYOUT) begin
+                wait_count++;
+                
+            // STATE 4: Fresh address phase
+            end else if (!addr_phase_valid &&
+                         vif.monitor_cb.HSEL &&
+                         vif.monitor_cb.HTRANS[1] &&
+                         vif.monitor_cb.HREADY) begin
+                captured_addr = vif.monitor_cb.HADDR;
+                captured_write = vif.monitor_cb.HWRITE;
+                captured_trans = ahb_htrans_e'(vif.monitor_cb.HTRANS);
+                captured_size = ahb_hsize_e'(vif.monitor_cb.HSIZE);
+                captured_burst = ahb_hburst_e'(vif.monitor_cb.HBURST);
+                captured_prot = vif.monitor_cb.HPROT;
+                addr_phase_valid = 1;
+                in_data_phase = 0;
+                wait_count = 0;
+            end
+        end
+    endtask
+
+endclass
+
+`endif
+`ifndef AHB_LITE_PKG_SV
+`define AHB_LITE_PKG_SV
+
+package ahb_lite_pkg;
+    
+    import uvm_pkg::*;
+    `include "uvm_macros.svh"
+    
+    `include "ahb_lite_types.sv"
+    `include "ahb_lite_config.sv"
+    `include "ahb_lite_seq_item.sv"
+    `include "ahb_lite_sequencer.sv"
+    `include "ahb_lite_driver.sv"
+    `include "ahb_lite_monitor.sv"
+    `include "ahb_lite_agent.sv"
+    
+    `include "sequences/ahb_lite_base_seq.sv"
+    `include "sequences/ahb_lite_read_seq.sv"
+    `include "sequences/ahb_lite_write_seq.sv"
+    `include "sequences/ahb_lite_rwr_seq.sv"
+    `include "sequences/ahb_lite_cache_seq.sv"
+    `include "sequences/ahb_lite_random_seq.sv"
+        
+endpackage : ahb_lite_pkg
+
+`endif
+
+`ifndef AHB_LITE_DRIVER_SV
+`define AHB_LITE_DRIVER_SV
+
+class ahb_lite_driver extends uvm_driver #(ahb_lite_seq_item);
+    
+    `uvm_component_utils(ahb_lite_driver)
+    
+    virtual master_ahb_if vif;
+    ahb_lite_config cfg;
+    
+    function new(string name = "ahb_lite_driver", uvm_component parent = null);
+        super.new(name, parent);  // â FIXED
+    endfunction
+    
+    function void build_phase(uvm_phase phase);
+        super.build_phase(phase);
+        if (!uvm_config_db#(virtual master_ahb_if)::get(this, "", "vif", vif))
+            `uvm_fatal("NOVIF", "Virtual interface not found")
+        if (!uvm_config_db#(ahb_lite_config)::get(this, "", "cfg", cfg))
+            `uvm_fatal("NOCFG", "Configuration not found")
+    endfunction
+    
+    task run_phase(uvm_phase phase);
+        reset_signals();
+        forever begin
+            seq_item_port.get_next_item(req);
+            drive_transaction(req);
+            seq_item_port.item_done();
+        end
+    endtask
+    
+    task drive_transaction(ahb_lite_seq_item txn);
+        `uvm_info("DRIVER", $sformatf("Driving %s to 0x%08h", 
+                  txn.write ? "WRITE" : "READ", txn.addr), UVM_MEDIUM)
+        
+        // Address phase
+        wait(vif.master_cb.HREADY);
+        @(vif.master_cb);
+        
+        vif.master_cb.HADDR <= txn.addr;
+        vif.master_cb.HTRANS <= txn.trans_type;
+        vif.master_cb.HWRITE <= txn.write;
+        vif.master_cb.HSIZE <= txn.size;
+        vif.master_cb.HBURST <= txn.burst;
+        vif.master_cb.HPROT <= txn.prot;
+        vif.master_cb.HSEL <= 1'b1;
+        
+        // Data phase
+        @(vif.master_cb);
+        
+        if (txn.write)
+            vif.master_cb.HWDATA <= txn.data;
+        
+        // Wait for slave to be ready
+        txn.wait_cycles = 0;
+        while (!vif.master_cb.HREADYOUT) begin
+            @(vif.master_cb);
+            txn.wait_cycles++;
+            if (txn.wait_cycles > cfg.max_wait_cycles) begin
+                `uvm_error("DRIVER", "HREADYOUT timeout")
+                break;
+            end
+        end
+        
+        // Sample response
+        txn.resp = ahb_hresp_e'(vif.master_cb.HRESP);
+        
+        // For reads: sample data
+        if (!txn.write) begin
+            if (txn.resp == OKAY) begin
+                txn.data = vif.master_cb.HRDATA;
+                `uvm_info("DRIVER", $sformatf("Read 0x%08h from 0x%08h (waits=%0d)", 
+                          txn.data, txn.addr, txn.wait_cycles), UVM_HIGH)
+            end else begin
+                txn.data = 32'hXXXXXXXX;
+                `uvm_info("DRIVER", "ERROR response - data invalid", UVM_MEDIUM)
+            end
+        end else begin
+            `uvm_info("DRIVER", $sformatf("Wrote 0x%08h to 0x%08h (waits=%0d)", 
+                      txn.data, txn.addr, txn.wait_cycles), UVM_HIGH)
+        end
+        
+        `uvm_info("DRIVER", $sformatf("Complete: resp=%s", txn.resp.name()), UVM_HIGH)
+    endtask
+    
+    task reset_signals();
+        vif.master_cb.HADDR <= '0;
+        vif.master_cb.HTRANS <= IDLE;
+        vif.master_cb.HWRITE <= '0;
+        vif.master_cb.HSIZE <= SIZE_WORD;
+        vif.master_cb.HBURST <= SINGLE;
+        vif.master_cb.HPROT <= '0;
+        vif.master_cb.HWDATA <= '0;
+        vif.master_cb.HSEL <= '0;
+    endtask
+endclass
+
+`endif
+`ifndef MASTER_AHB_IF_SV
+`define MASTER_AHB_IF_SV
+
+interface master_ahb_if(input logic HCLK, input logic HRESETn);
+    
+    // Master drives these (outputs)
+    logic [31:0]  HADDR;
+    logic [1:0]   HTRANS;
+    logic         HWRITE;
+    logic [2:0]   HSIZE;
+    logic [2:0]   HBURST;
+    logic [3:0]   HPROT;
+    logic [31:0]  HWDATA;
+    logic         HSEL;
+    
+    // Master samples these (inputs)
+    logic         HREADY;
+    logic         HREADYOUT;
+    logic [31:0]  HRDATA;
+    logic         HRESP;
+    
+    // Master driver clocking block
+    clocking master_cb @(posedge HCLK);
+        default input #1step output #1step;
+        output HADDR, HTRANS, HWRITE, HSIZE, HBURST, HPROT, HWDATA, HSEL;
+        input  HREADY, HREADYOUT, HRDATA, HRESP;
+    endclocking
+    
+    // Monitor clocking block
+    clocking monitor_cb @(posedge HCLK);
+        default input #1step;
+        input HADDR, HTRANS, HWRITE, HSIZE, HBURST, HPROT, HWDATA, HSEL;
+        input HREADY, HREADYOUT, HRDATA, HRESP;
+    endclocking
+    
+endinterface
+
+`endif
+`ifndef AHB_LITE_IF_SV
+`define AHB_LITE_IF_SV
+
+interface ahb_lite_if(input logic HCLK, input logic HRESETn);
+    
+    // AHB-Lite signals
+    logic [31:0]  HADDR;
+    logic [1:0]   HTRANS;
+    logic         HWRITE;
+    logic [2:0]   HSIZE;
+    logic [2:0]   HBURST;
+    logic [3:0]   HPROT;
+    logic [31:0]  HWDATA;
+    logic         HSEL;
+    logic         HREADY;
+    logic         HREADYOUT;
+    logic [31:0]  HRDATA;
+    logic         HRESP;
+    
+    // Master clocking block
+    clocking master_cb @(posedge HCLK);
+        default input #1step output #1step;
+        output HADDR;
+        output HTRANS;
+        output HWRITE;
+        output HSIZE;
+        output HBURST;
+        output HPROT;
+        output HWDATA;
+        output HSEL;
+        input  HREADY;
+        input  HREADYOUT;
+        input  HRDATA;
+        input  HRESP;
+    endclocking
+    
+    // Slave clocking block
+    clocking slave_cb @(posedge HCLK);
+        default input #1step output #1step;
+        input  HADDR;
+        input  HTRANS;
+        input  HWRITE;
+        input  HSIZE;
+        input  HBURST;
+        input  HPROT;
+        input  HWDATA;
+        input  HSEL;
+        input  HREADY;
+        output HREADYOUT;
+        output HRDATA;
+        output HRESP;
+    endclocking
+    
+    // Monitor clocking block
+    clocking monitor_cb @(posedge HCLK);
+        default input #1step;
+        input HADDR;
+        input HTRANS;
+        input HWRITE;
+        input HSIZE;
+        input HBURST;
+        input HPROT;
+        input HWDATA;
+        input HSEL;
+        input HREADY;
+        input HREADYOUT;
+        input HRDATA;
+        input HRESP;
+    endclocking
+    
+endinterface
+
+`endif
+
+
+
+
+
+
+
+
+/*
+`ifndef AHB_LITE_IF_SV
+`define AHB_LITE_IF_SV
+
+interface ahb_lite_if (
+    input logic HCLK,
+    input logic HRESETn
+);
+
+    // AHB-Lite signals
+    logic [31:0]  HADDR;
+    logic [1:0]   HTRANS;
+    logic         HWRITE;
+    logic [2:0]   HSIZE;
+    logic [2:0]   HBURST;
+    logic [3:0]   HPROT;
+    logic [31:0]  HWDATA;
+    logic         HSEL;
+    logic         HREADY;
+    logic         HREADYOUT;
+    logic [31:0]  HRDATA;
+    logic         HRESP;
+
+    // Clocking block for driver
+    clocking master_cb @(posedge HCLK);
+        default input #1step output #0;
+        output HADDR, HTRANS, HWRITE, HSIZE, HBURST, HPROT, HWDATA, HSEL;
+        input  HREADY, HREADYOUT, HRDATA, HRESP;
+    endclocking
+
+    // Clocking block for monitor
+    clocking monitor_cb @(posedge HCLK);
+        default input #1step;
+        input HADDR, HTRANS, HWRITE, HSIZE, HBURST, HPROT, HWDATA, HSEL;
+        input HREADY, HREADYOUT, HRDATA, HRESP;
+    endclocking
+
+    // Modports
+    modport master (clocking master_cb, input HCLK, HRESETn);
+    modport monitor (clocking monitor_cb, input HCLK, HRESETn);
+
+    // Protocol assertions
+    property p_hready_stable;
+        @(posedge HCLK) disable iff (!HRESETn)
+        (HSEL && HTRANS[1] && !HREADY) |=> $stable(HADDR);
+    endproperty
+
+    assert property (p_hready_stable)
+        else $error("HADDR changed during wait state");
+
+endinterface : ahb_lite_if
+
+`endif
+*/
+
+
+
+`timescale 1ns/1ps
+`default_nettype none
+
+module flash_model #(
+    parameter MEM_SIZE  = 65536,
+    parameter INIT_FILE = ""
+)(
+    input  wire       sck,
+    input  wire       ce_n,
+    input  wire [3:0] dout,
+    output reg  [3:0] din,
+    input  wire [3:0] douten
+);
+
+    // Memory
+    reg [7:0] memory [0:MEM_SIZE-1];
+    integer idx;
+
+initial begin
+    for (idx = 0; idx < MEM_SIZE; idx = idx + 1)
+        memory[idx] = 8'hAA;   // default
+
+    // Cache line 1: 0x1000â0x101F (32 bytes = 8 words)
+    memory[16'h1000] = 8'h11; memory[16'h1001] = 8'h22;
+    memory[16'h1002] = 8'h33; memory[16'h1003] = 8'h44;  // word 0 = 0x11223344
+
+    memory[16'h1004] = 8'hAA; memory[16'h1005] = 8'hBB;
+    memory[16'h1006] = 8'hCC; memory[16'h1007] = 8'hDD;  // word 1 = 0xAABBCCDD
+
+    memory[16'h1008] = 8'hDE; memory[16'h1009] = 8'hAD;
+    memory[16'h100A] = 8'hBE; memory[16'h100B] = 8'hEF;  // word 2 = 0xDEADBEEF
+
+    memory[16'h100C] = 8'hCA; memory[16'h100D] = 8'hFE;
+    memory[16'h100E] = 8'hBA; memory[16'h100F] = 8'hBE;  // word 3 = 0xCAFEBABE
+
+    // Cache line 2: 0x1020â0x103F (8 words)
+    memory[16'h1020] = 8'h55; memory[16'h1021] = 8'h66;
+    memory[16'h1022] = 8'h77; memory[16'h1023] = 8'h88;  // word 8 = 0x55667788
+
+    // fill rest of line 2 with distinct pattern
+    for (idx = 16'h1024; idx < 16'h1040; idx = idx + 1)
+        memory[idx] = 8'hBB;
+
+    // 0x3000 for write test
+    memory[16'h3000] = 8'hDE; memory[16'h3001] = 8'hAD;
+    memory[16'h3002] = 8'hBE; memory[16'h3003] = 8'hEF;
+end
+
+
+/*
+    initial begin
+        for (idx = 0; idx < MEM_SIZE; idx = idx + 1)
+            memory[idx] = 8'hAA;
+
+        memory[16'h3000] = 8'hDE;
+        memory[16'h3001] = 8'hAD;
+        memory[16'h3002] = 8'hBE;
+        memory[16'h3003] = 8'hEF;
+
+        if (INIT_FILE != "")
+            $readmemh(INIT_FILE, memory);
+
+        din = 4'hz;
+        $display("[FLASH] Initialized. MEM_SIZE=%0d", MEM_SIZE);
+    end
+*/
+
+    // FSM state encoding
+    localparam ST_IDLE  = 3'd0,
+               ST_CMD   = 3'd1,
+               ST_ADDR  = 3'd2,
+               ST_MODE  = 3'd3,
+               ST_DUMMY = 3'd4,
+               ST_DATA  = 3'd5;
+
+    reg [2:0]  state;
+    reg [7:0]  cmd_shift;
+    reg [23:0] addr_shift;
+    reg [7:0]  mode_shift;
+    reg [7:0]  bit_cnt;
+    reg [23:0] read_addr;
+    reg [7:0]  out_byte;
+    reg        hi_nibble;
+    reg        first_transaction;
+
+    initial begin
+        state             = ST_IDLE;
+        cmd_shift         = 0;
+        addr_shift        = 0;
+        mode_shift        = 0;
+        bit_cnt           = 0;
+        read_addr         = 0;
+        out_byte          = 0;
+        hi_nibble         = 1;
+        first_transaction = 1;
+    end
+
+    // CE deassert â reset FSM
+    always @(posedge ce_n) begin
+        if (state == ST_DATA) begin
+            first_transaction <= 1'b0;
+            $display("[FLASH] Transaction complete, continuous mode enabled at %0t", $time);
+        end
+        state   <= ST_IDLE;
+        bit_cnt <= 0;
+        din     <= 4'hz;
+    end
+
+    // SCK rising â receive/process data
+    always @(posedge sck) begin
+        if (!ce_n) begin
+            case (state)
+
+                ST_IDLE: begin
+                    bit_cnt <= 8'd1;
+                    if (first_transaction) begin
+                        cmd_shift <= {7'b0, dout[0]};
+                        state     <= ST_CMD;
+                    end else begin
+                        // Continuous mode â DUT skips command, sends address directly
+                        addr_shift <= {20'b0, dout};
+                        state      <= ST_ADDR;
+                        $display("[FLASH] Continuous: addr phase direct at %0t", $time);
+                    end
+                end
+
+                ST_CMD: begin
+                    cmd_shift <= {cmd_shift[6:0], dout[0]};
+                    bit_cnt   <= bit_cnt + 1;
+                    if (bit_cnt == 7) begin
+                        case ({cmd_shift[6:0], dout[0]})
+                            8'hEB: begin
+                                bit_cnt <= 0;
+                                state   <= ST_ADDR;
+                                $display("[FLASH] CMD=0xEB (Quad Read) at %0t", $time);
+                            end
+                            8'h66: begin
+                                bit_cnt <= 0;
+                                state   <= ST_IDLE;
+                                $display("[FLASH] CMD=0x66 (Reset Enable) at %0t", $time);
+                            end
+                            8'h99: begin
+                                bit_cnt <= 0;
+                                state   <= ST_IDLE;
+                                $display("[FLASH] CMD=0x99 (Reset) at %0t", $time);
+                            end
+                            default: begin
+                                $display("[FLASH] Ignoring unknown CMD=0x%02h at %0t",
+                                         {cmd_shift[6:0], dout[0]}, $time);
+                                bit_cnt <= 0;
+                                state   <= ST_IDLE;
+                            end
+                        endcase
+                    end
+                end
+
+                ST_ADDR: begin
+                    addr_shift <= {addr_shift[19:0], dout};
+                    bit_cnt    <= bit_cnt + 1;
+                    if (bit_cnt == 5) begin
+                        read_addr <= {addr_shift[19:0], dout};
+                        bit_cnt   <= 0;
+                        state     <= ST_MODE;
+                        $display("[FLASH] ADDR=0x%06h at %0t",
+                                 {addr_shift[19:0], dout}, $time);
+                    end
+                end
+
+                ST_MODE: begin
+                    mode_shift <= {mode_shift[3:0], dout};
+                    bit_cnt    <= bit_cnt + 1;
+                    if (bit_cnt == 1) begin
+                        bit_cnt <= 0;
+                        state   <= ST_DUMMY;
+                    end
+                end
+
+                ST_DUMMY: begin
+                    bit_cnt <= bit_cnt + 1;
+                    if (bit_cnt == 3) begin
+                        bit_cnt   <= 0;
+                        out_byte  <= memory[read_addr];
+                        hi_nibble <= 1;
+                        state     <= ST_DATA;
+                        $display("[FLASH] Data phase start, addr=0x%06h at %0t",
+                                 read_addr, $time);
+                    end
+                end
+
+                ST_DATA: begin
+                    // output handled on negedge below
+                end
+
+            endcase
+        end
+    end
+
+    // SCK falling â drive output data to controller
+    always @(negedge sck) begin
+        if (!ce_n && state == ST_DATA) begin
+            if (hi_nibble) begin
+                din       <= out_byte[7:4];
+                hi_nibble <= 0;
+            end else begin
+                din       <= out_byte[3:0];
+                hi_nibble <= 1;
+                read_addr <= read_addr + 1;
+                out_byte  <= memory[read_addr + 1];
+            end
+        end else begin
+            din <= 4'hz;
+        end
+    end
+
+    // Activity logging
+    always @(negedge ce_n)
+        $display("[FLASH] Transaction started at time %0t", $time);
+
+endmodule
+/*
+`timescale 1ns/1ps
+
+module flash_model (
+    input  wire       sck,
+    input  wire       ce_n,
+    input  wire [3:0] dout,  // From controller
+    output reg  [3:0] din,   // To controller
+    input  wire [3:0] douten
+);
+
+    // Simple memory array
+    reg [7:0] memory [0:65535];  // 64KB
+    
+    // Initialize with test pattern
+    initial begin
+        for (int i = 0; i < 65536; i++) begin
+            memory[i] = i[7:0];  // Simple pattern
+        end
+        
+        // Put some recognizable data at specific addresses
+        memory[16'h1000] = 8'hAA;
+        memory[16'h1001] = 8'hBB;
+        memory[16'h1002] = 8'hCC;
+        memory[16'h1003] = 8'hDD;
+        
+        memory[16'h1004] = 8'h11;
+        memory[16'h1005] = 8'h22;
+        memory[16'h1006] = 8'h33;
+        memory[16'h1007] = 8'h44;
+    end
+    
+    // Simple response - just return data
+    // In real flash, you'd decode commands, addresses, etc.
+    always @(posedge sck or posedge ce_n) begin
+        if (!ce_n) begin
+            // Return some data (simplified)
+            din <= 4'hA;  // Dummy data for now
+        end else begin
+            din <= 4'h0;
+        end
+    end
+    
+    // Display activity
+    always @(negedge ce_n) begin
+        $display("[FLASH] Transaction started at time %0t", $time);
+    end
+
+endmodule
+
+*/
+`ifndef TB_ENV_SV
+`define TB_ENV_SV
+
+`include "ahb_scoreboard.sv"
+
+class tb_env extends uvm_env;
+    
+    `uvm_component_utils(tb_env)
+    
+    ahb_lite_agent  agent;
+    ahb_scoreboard  sb;
+    ahb_lite_config cfg;
+    
+    function new(string name = "tb_env", uvm_component parent = null);
+        super.new(name, parent);
+    endfunction
+    
+    function void build_phase(uvm_phase phase);
+        super.build_phase(phase);
+        
+        cfg = ahb_lite_config::type_id::create("cfg");
+        cfg.is_active = UVM_ACTIVE;
+        cfg.agent_mode = AHB_MASTER;
+        cfg.enable_protocol_checks = 1;
+        cfg.max_wait_cycles = 200;
+        
+        uvm_config_db#(ahb_lite_config)::set(this, "*", "cfg", cfg);
+        
+        agent = ahb_lite_agent::type_id::create("agent", this);
+        sb = ahb_scoreboard::type_id::create("sb", this);
+    endfunction
+    
+    function void connect_phase(uvm_phase phase);
+        super.connect_phase(phase);
+        agent.ap.connect(sb.ap_imp);
+    endfunction
+
+endclass : tb_env
+
+`endif
+`timescale 1ns/1ps
+
+module tb_top;
+    
+    import uvm_pkg::*;
+    import ahb_lite_pkg::*;
+    `include "uvm_macros.svh"
+    
+    // Include test files
+    `include "tb_env.sv"
+    `include "tb_test.sv"
+    
+    // Clock and reset
+    logic HCLK;
+    logic HRESETn;
+    
+    // QSPI flash signals
+    wire        sck;
+    wire        ce_n;
+    wire [3:0]  din;
+    wire [3:0]  dout;
+    wire [3:0]  douten;
+    
+    // Instantiate AHB-Lite interface
+    ahb_lite_if vif(HCLK, HRESETn);
+    
+    // Clock generation (100 MHz)
+    initial begin
+        HCLK = 0;
+        forever #5 HCLK = ~HCLK;
+    end
+    
+    // Reset generation
+    initial begin
+        HRESETn = 0;
+        repeat(20) @(posedge HCLK);
+        HRESETn = 1;
+        `uvm_info("TB_TOP", "Reset released", UVM_LOW)
+    end
+    
+    // Tie HREADY (no other masters)
+    assign vif.HREADY = vif.HREADYOUT;
+    
+    // DUT: QSPI XIP Controller
+    EF_QSPI_XIP_CTRL_AHBL #(
+        .NUM_LINES(16),
+        .LINE_SIZE(32),
+        .RESET_CYCLES(10)  // Short for simulation
+    ) dut (
+        .HCLK(vif.HCLK),
+        .HRESETn(vif.HRESETn),
+        .HSEL(vif.HSEL),
+        .HADDR(vif.HADDR),
+        .HTRANS(vif.HTRANS),
+        .HWRITE(vif.HWRITE),
+        .HREADY(vif.HREADY),
+        .HREADYOUT(vif.HREADYOUT),
+        .HRDATA(vif.HRDATA),
+        .sck(sck),
+        .ce_n(ce_n),
+        .din(din),
+        .dout(dout),
+        .douten(douten)
+    );
+
+   /* 
+    // Flash model
+    flash_model flash (
+        .sck(sck),
+        .ce_n(ce_n),
+        .dout(dout),
+        .din(din),
+        .douten(douten)
+    );
+*/
+
+flash_model #(
+        .MEM_SIZE  (65536),     // 64KB â same as before
+        .INIT_FILE ("")         // leave empty to use built-in pattern
+                                // or: .INIT_FILE("flash_init.hex")
+    ) flash (
+        .sck    (sck),
+        .ce_n   (ce_n),
+        .dout   (dout),         // controller â flash (our input)
+        .din    (din),          // flash â controller (our output)
+        .douten (douten)
+    );
+    
+    // UVM configuration
+    initial begin
+        // Set interface in config DB
+        uvm_config_db#(virtual ahb_lite_if)::set(null, "*", "vif", vif);
+        
+        // Run test
+        run_test();
+    end
+    
+    // Timeout watchdog
+    initial begin
+        #100000;
+        `uvm_error("TB_TOP", "Test timeout!")
+        $finish;
+    end
+    
+    // Waveform dumping
+initial begin
+    $dumpfile("waves.vcd");    
+    $dumpvars(0, tb_top);
+end
+    
+endmodule
+`ifndef AHB_SCOREBOARD_SV
+`define AHB_SCOREBOARD_SV
+
+class ahb_scoreboard extends uvm_scoreboard;
+    
+    `uvm_component_utils(ahb_scoreboard)
+    
+    // Analysis import
+    uvm_analysis_imp #(ahb_lite_seq_item, ahb_scoreboard) ap_imp;
+    
+    // Statistics
+    int num_reads;
+    int num_writes;
+    int num_errors;
+    int num_unchecked;
+    int total_wait_cycles;
+    int min_wait_cycles;
+    int max_wait_cycles;
+    
+    // Cache statistics
+    int cache_hits;
+    int cache_misses;
+    
+    // Expected memory pre-loaded from flash model layout
+    // Key = AHB word address, Value = expected 32-bit HRDATA (little-endian assembled)
+    bit [31:0] memory [bit [31:0]];
+    
+    // Address tracking
+    bit [31:0] last_addr;
+    int sequential_accesses;
+    
+    function new(string name = "ahb_scoreboard", uvm_component parent = null);
+        super.new(name, parent);
+        ap_imp          = new("ap_imp", this);
+        min_wait_cycles = 999999;
+        max_wait_cycles = 0;
+    endfunction
+
+    
+    // build_phase: pre-load expected values from flash model
+    // Must mirror flash_model initial block, assembled as
+    // little-endian 32-bit words:
+    //   HRDATA[7:0]   = memory[addr+0]
+    //   HRDATA[15:8]  = memory[addr+1]
+    //   HRDATA[23:16] = memory[addr+2]
+    //   HRDATA[31:24] = memory[addr+3]
+    
+    function void build_phase(uvm_phase phase);
+        super.build_phase(phase);
+        load_expected_memory();
+    endfunction
+
+    function void load_expected_memory();
+
+        // Cache line 1: 0x1000 to 0x101F (8 words)
+        memory[32'h0000_1000] = 32'h44332211;  // flash: 11 22 33 44
+        memory[32'h0000_1004] = 32'hDDCCBBAA;  // flash: AA BB CC DD
+        memory[32'h0000_1008] = 32'hEFBEADDE;  // flash: DE AD BE EF
+        memory[32'h0000_100C] = 32'hBEBAFECA;  // flash: CA FE BA BE
+        memory[32'h0000_1010] = 32'hAAAAAAAA;  // default fill
+        memory[32'h0000_1014] = 32'hAAAAAAAA;
+        memory[32'h0000_1018] = 32'hAAAAAAAA;
+        memory[32'h0000_101C] = 32'hAAAAAAAA;
+
+        // Cache line 2: 0x1020 to 0x103F (8 words)
+        memory[32'h0000_1020] = 32'h88776655;  // flash: 55 66 77 88
+        memory[32'h0000_1024] = 32'hBBBBBBBB;  // fill pattern
+        memory[32'h0000_1028] = 32'hBBBBBBBB;
+        memory[32'h0000_102C] = 32'hBBBBBBBB;
+        memory[32'h0000_1030] = 32'hBBBBBBBB;
+        memory[32'h0000_1034] = 32'hBBBBBBBB;
+        memory[32'h0000_1038] = 32'hBBBBBBBB;
+        memory[32'h0000_103C] = 32'hBBBBBBBB;
+	
+	// Write-test address: flash bytes DE AD BE EF â LE word = 0xEFBEADDE
+   	memory[32'h0000_3000] = 32'hEFBEADDE;
+
+	// Cache test region: base_addr=0x2000, all default 0xAA fill
+    	memory[32'h0000_2000] = 32'hAAAAAAAA;
+    	memory[32'h0000_2004] = 32'hAAAAAAAA;
+    	memory[32'h0000_2008] = 32'hAAAAAAAA;
+    	memory[32'h0000_200C] = 32'hAAAAAAAA;
+    	// second cache line (0x2010)
+    	memory[32'h0000_2010] = 32'hAAAAAAAA;
+   	memory[32'h0000_2014] = 32'hAAAAAAAA;
+    	memory[32'h0000_2018] = 32'hAAAAAAAA;
+    	memory[32'h0000_201C] = 32'hAAAAAAAA;
+	memory[32'h0000_2020] = 32'hAAAAAAAA;   // default fill
+    	memory[32'h0000_2024] = 32'hAAAAAAAA;
+    	memory[32'h0000_2028] = 32'hAAAAAAAA;
+    	memory[32'h0000_202C] = 32'hAAAAAAAA;
+    	memory[32'h0000_2030] = 32'hAAAAAAAA;
+    	memory[32'h0000_2034] = 32'hAAAAAAAA;
+    	memory[32'h0000_2038] = 32'hAAAAAAAA;
+    	memory[32'h0000_203C] = 32'hAAAAAAAA;
+
+    	// 0x3000 region: flash bytes DE AD BE EF â little-endian = 0xEFBEADDE
+    memory[32'h0000_3000] = 32'hEFBEADDE;
+    memory[32'h0000_3004] = 32'hAAAAAAAA;   // rest of line is default
+   
+        `uvm_info("SB", "Expected memory pre-loaded from flash model layout", UVM_LOW)
+    endfunction
+
+    
+    // write: called by monitor via analysis port
+    
+    function void write(ahb_lite_seq_item txn);
+
+        // Update wait cycle statistics
+        total_wait_cycles += txn.wait_cycles;
+        if (txn.wait_cycles < min_wait_cycles)
+            min_wait_cycles = txn.wait_cycles;
+        if (txn.wait_cycles > max_wait_cycles)
+            max_wait_cycles = txn.wait_cycles;
+
+        // Classify cache hit/miss
+        // In write() function:
+	if (txn.wait_cycles < 10)
+    		cache_hits++;
+	else if (txn.wait_cycles > 50)  // 193 >> 50, so this works â
+    		cache_misses++;
+	// Add explicit log for misses:
+	if (txn.wait_cycles > 50)
+    	`uvm_info("SB", $sformatf(
+        "CACHE MISS detected: [0x%08h] waits=%0d cycles",
+        txn.addr, txn.wait_cycles), UVM_LOW)
+        // Track sequential accesses
+        if (txn.addr == last_addr + 4)
+            sequential_accesses++;
+        last_addr = txn.addr;
+
+        // Route to write or read checker
+        if (txn.write)
+            check_write(txn);
+        else
+            check_read(txn);
+
+        if (txn.resp == ERROR)
+            num_errors++;
+
+    endfunction
+
+    
+    // check_write: DUT is read-only XIP so writes have no effect
+    
+    function void check_write(ahb_lite_seq_item txn);
+        num_writes++;
+        `uvm_warning("SB", $sformatf(
+            "WRITE IGNORED: [0x%08h] = 0x%08h | DUT is READ-ONLY XIP, write has no effect",
+            txn.addr, txn.data))
+    endfunction
+
+    
+    // check_read: compare HRDATA against pre-loaded expected
+    
+    function void check_read(ahb_lite_seq_item txn);
+        bit [31:0] expected;
+        num_reads++;
+
+        if (memory.exists(txn.addr)) begin
+            expected = memory[txn.addr];
+            if (txn.data !== expected) begin
+                `uvm_error("SB", $sformatf(
+                    "READ MISMATCH: [0x%08h] Expected=0x%08h Got=0x%08h (waits=%0d)",
+                    txn.addr, expected, txn.data, txn.wait_cycles))
+            end else begin
+                `uvm_info("SB", $sformatf(
+                    "READ MATCH: [0x%08h] = 0x%08h (waits=%0d)",
+                    txn.addr, txn.data, txn.wait_cycles), UVM_MEDIUM)
+            end
+        end else begin
+            // Address outside pre-loaded table not checked, flag it
+            num_unchecked++;
+            `uvm_warning("SB", $sformatf(
+                "READ UNCHECKED: [0x%08h] = 0x%08h (waits=%0d) add to load_expected_memory()",
+                txn.addr, txn.data, txn.wait_cycles))
+        end
+
+    endfunction
+
+    
+    // report_phase
+        function void report_phase(uvm_phase phase);
+        real avg_wait;
+        real hit_rate;
+        int  total_accesses;
+
+        super.report_phase(phase);
+
+        total_accesses = num_reads + num_writes;
+
+        `uvm_info("SB_REPORT", "========================================================", UVM_NONE)
+        `uvm_info("SB_REPORT", "              SCOREBOARD STATISTICS                     ", UVM_NONE)
+        `uvm_info("SB_REPORT", "========================================================", UVM_NONE)
+        `uvm_info("SB_REPORT", $sformatf("Total Transactions:   %0d", total_accesses),    UVM_NONE)
+        `uvm_info("SB_REPORT", $sformatf("  Reads:              %0d", num_reads),          UVM_NONE)
+        `uvm_info("SB_REPORT", $sformatf("  Writes:             %0d", num_writes),         UVM_NONE)
+        `uvm_info("SB_REPORT", $sformatf("  Errors:             %0d", num_errors),         UVM_NONE)
+        `uvm_info("SB_REPORT", $sformatf("  Unchecked Reads:    %0d", num_unchecked),      UVM_NONE)
+        `uvm_info("SB_REPORT", "--------------------------------------------------------", UVM_NONE)
+
+        if (total_accesses > 0) begin
+            avg_wait = real'(total_wait_cycles) / real'(total_accesses);
+            `uvm_info("SB_REPORT", "Wait Cycle Statistics:",                                     UVM_NONE)
+            `uvm_info("SB_REPORT", $sformatf("  Average:            %.2f cycles", avg_wait),     UVM_NONE)
+            `uvm_info("SB_REPORT", $sformatf("  Minimum:            %0d cycles", min_wait_cycles), UVM_NONE)
+            `uvm_info("SB_REPORT", $sformatf("  Maximum:            %0d cycles", max_wait_cycles), UVM_NONE)
+        end
+
+        `uvm_info("SB_REPORT", "--------------------------------------------------------", UVM_NONE)
+        `uvm_info("SB_REPORT", "Cache Behavior:",                                          UVM_NONE)
+        `uvm_info("SB_REPORT", $sformatf("  Hits (< 10 cycles): %0d", cache_hits),        UVM_NONE)
+        `uvm_info("SB_REPORT", $sformatf("  Misses (> 50 cyc):  %0d", cache_misses),      UVM_NONE)
+
+        if (total_accesses > 0) begin
+            hit_rate = (real'(cache_hits) / real'(total_accesses)) * 100.0;
+            `uvm_info("SB_REPORT", $sformatf("  Hit Rate:           %.1f%%", hit_rate),    UVM_NONE)
+        end
+
+        `uvm_info("SB_REPORT", "--------------------------------------------------------", UVM_NONE)
+        `uvm_info("SB_REPORT", "Access Patterns:",                                         UVM_NONE)
+        `uvm_info("SB_REPORT", $sformatf("  Sequential:         %0d", sequential_accesses), UVM_NONE)
+        `uvm_info("SB_REPORT", "========================================================", UVM_NONE)
+
+        // Final verdict
+        if (num_errors == 0 && num_unchecked == 0)
+            `uvm_info("SB_REPORT", "RESULT: ALL READS MATCHED EXPECTED VALUES *** PASS ***", UVM_NONE)
+        else if (num_errors > 0)
+            `uvm_error("SB_REPORT", $sformatf(
+                "RESULT: %0d MISMATCHES FOUND *** FAIL ***", num_errors))
+        else
+            `uvm_warning("SB_REPORT", $sformatf(
+                "RESULT: %0d unchecked reads add addresses to load_expected_memory()", num_unchecked))
+
+    endfunction
+
+endclass : ahb_scoreboard
+
+`endif
+
+`ifndef TB_TEST_SV
+`define TB_TEST_SV
+
+// Base test class
+class base_test extends uvm_test;
+    
+    `uvm_component_utils(base_test)
+    
+    tb_env env;
+    
+    function new(string name = "base_test", uvm_component parent = null);
+        super.new(name, parent);
+    endfunction
+    
+    function void build_phase(uvm_phase phase);
+        super.build_phase(phase);
+        env = tb_env::type_id::create("env", this);
+    endfunction
+    
+    task run_phase(uvm_phase phase);
+        phase.raise_objection(this);
+        #100;  // Wait for reset
+        run_test_sequence();
+        #500;  // Settle time
+        phase.drop_objection(this);
+    endtask
+    
+    virtual task run_test_sequence();
+        // Override in derived tests
+    endtask
+
+endclass : base_test
+
+// =====================================================
+// Test 1: Basic Read Test
+// =====================================================
+class basic_read_test extends base_test;
+    
+    `uvm_component_utils(basic_read_test)
+    
+    function new(string name = "basic_read_test", uvm_component parent = null);
+        super.new(name, parent);
+    endfunction
+    
+    task run_test_sequence();
+	
+        ahb_lite_read_seq seq;
+        
+        `uvm_info("TEST", "========================================", UVM_NONE)
+        `uvm_info("TEST", "  Basic Read Test", UVM_NONE)
+        `uvm_info("TEST", "========================================", UVM_NONE)
+        #300; 
+        seq = ahb_lite_read_seq::type_id::create("seq");
+        assert(seq.randomize() with {
+            start_addr == 32'h0000_1000;
+            num_reads == 16;
+        });
+        seq.start(env.agent.sequencer);
+        
+        `uvm_info("TEST", "Basic Read Test Complete", UVM_NONE)
+    endtask
+
+endclass : basic_read_test
+
+// =====================================================
+// Test 2: Cache Behavior Test
+// =====================================================
+class cache_test extends base_test;
+    
+    `uvm_component_utils(cache_test)
+    
+    function new(string name = "cache_test", uvm_component parent = null);
+        super.new(name, parent);
+    endfunction
+    
+    task run_test_sequence();
+        ahb_lite_cache_seq seq;
+        
+        `uvm_info("TEST", "========================================", UVM_NONE)
+        `uvm_info("TEST", "  Cache Behavior Test", UVM_NONE)
+        `uvm_info("TEST", "========================================", UVM_NONE)
+        
+	 @(posedge vif.HRESETn);     // â wait for reset to deassert
+   	 repeat(10) @(posedge vif.HCLK); // â 10 cycle margin
+
+        seq = ahb_lite_cache_seq::type_id::create("seq");
+        assert(seq.randomize() with {
+            base_addr == 32'h0000_2000;
+        });
+        seq.start(env.agent.sequencer);
+	repeat(500) @(posedge vif.HCLK);
+        
+        `uvm_info("TEST", "Cache Test Complete", UVM_NONE)
+    endtask
+
+endclass : cache_test
+
+// =====================================================
+// Test 3: Write Test
+// =====================================================
+class write_test extends base_test;
+    
+    `uvm_component_utils(write_test)
+    
+    function new(string name = "write_test", uvm_component parent = null);
+        super.new(name, parent);
+    endfunction
+    
+    task run_test_sequence();
+        ahb_lite_write_seq seq;
+        
+        `uvm_info("TEST", "========================================", UVM_NONE)
+        `uvm_info("TEST", "  Write Test", UVM_NONE)
+        `uvm_info("TEST", "========================================", UVM_NONE)
+        #300;
+        seq = ahb_lite_write_seq::type_id::create("seq");
+        assert(seq.randomize() with {
+            start_addr == 32'h0000_3000;
+            num_writes == 10;
+            data_pattern == 32'hDEADBEEF;
+        });
+        seq.start(env.agent.sequencer);
+        
+        `uvm_info("TEST", "Write Test Complete", UVM_NONE)
+    endtask
+
+endclass : write_test
+
+// =====================================================
+// Test 4: Read-Write-Read Test
+// =====================================================
+class rwr_test extends base_test;
+    
+    `uvm_component_utils(rwr_test)
+    
+    function new(string name = "rwr_test", uvm_component parent = null);
+        super.new(name, parent);
+    endfunction
+    
+    task run_test_sequence();
+        ahb_lite_rwr_seq seq;
+        
+        `uvm_info("TEST", "========================================", UVM_NONE)
+        `uvm_info("TEST", "  Read-Write-Read Test", UVM_NONE)
+        `uvm_info("TEST", "========================================", UVM_NONE)
+        
+        repeat(5) begin
+            seq = ahb_lite_rwr_seq::type_id::create("seq");
+            assert(seq.randomize() with {
+                test_addr inside {[32'h1000:32'h2000]};
+            });
+            seq.start(env.agent.sequencer);
+        end
+        
+        `uvm_info("TEST", "RWR Test Complete", UVM_NONE)
+    endtask
+
+endclass : rwr_test
+
+// =====================================================
+// Test 5: Random Stress Test
+// =====================================================
+class random_test extends base_test;
+    
+    `uvm_component_utils(random_test)
+    
+    function new(string name = "random_test", uvm_component parent = null);
+        super.new(name, parent);
+    endfunction
+    
+    task run_test_sequence();
+        ahb_lite_random_seq seq;
+        
+        `uvm_info("TEST", "========================================", UVM_NONE)
+        `uvm_info("TEST", "  Random Stress Test", UVM_NONE)
+        `uvm_info("TEST", "========================================", UVM_NONE)
+        
+        seq = ahb_lite_random_seq::type_id::create("seq");
+        assert(seq.randomize() with {
+            num_transactions == 50;
+            addr_min == 32'h0000_1000;
+            addr_max == 32'h0000_5000;
+        });
+        seq.start(env.agent.sequencer);
+        
+        `uvm_info("TEST", "Random Test Complete", UVM_NONE)
+    endtask
+
+endclass : random_test
+
+// =====================================================
+// Test 6: Full Regression Test
+// =====================================================
+class regression_test extends base_test;
+    
+    `uvm_component_utils(regression_test)
+    
+    function new(string name = "regression_test", uvm_component parent = null);
+        super.new(name, parent);
+    endfunction
+    
+    task run_test_sequence();
+        ahb_lite_read_seq    read_seq;
+        ahb_lite_write_seq   write_seq;
+        ahb_lite_cache_seq   cache_seq;
+        ahb_lite_rwr_seq     rwr_seq;
+        ahb_lite_random_seq  rand_seq;
+        
+        `uvm_info("TEST", "========================================", UVM_NONE)
+        `uvm_info("TEST", "  Full Regression Test Suite", UVM_NONE)
+        `uvm_info("TEST", "========================================", UVM_NONE)
+        
+        // Test 1: Sequential reads
+        `uvm_info("TEST", "Running read test...", UVM_LOW)
+        read_seq = ahb_lite_read_seq::type_id::create("read_seq");
+        read_seq.randomize();
+        read_seq.start(env.agent.sequencer);
+        
+        // Test 2: Cache behavior
+        `uvm_info("TEST", "Running cache test...", UVM_LOW)
+        cache_seq = ahb_lite_cache_seq::type_id::create("cache_seq");
+        cache_seq.randomize();
+        cache_seq.start(env.agent.sequencer);
+        
+        // Test 3: Writes
+        `uvm_info("TEST", "Running write test...", UVM_LOW)
+        write_seq = ahb_lite_write_seq::type_id::create("write_seq");
+        write_seq.randomize();
+        write_seq.start(env.agent.sequencer);
+        
+        // Test 4: RWR
+        `uvm_info("TEST", "Running RWR test...", UVM_LOW)
+        repeat(3) begin
+            rwr_seq = ahb_lite_rwr_seq::type_id::create("rwr_seq");
+            rwr_seq.randomize();
+            rwr_seq.start(env.agent.sequencer);
+        end
+        
+        // Test 5: Random
+        `uvm_info("TEST", "Running random test...", UVM_LOW)
+        rand_seq = ahb_lite_random_seq::type_id::create("rand_seq");
+        rand_seq.randomize();
+        rand_seq.start(env.agent.sequencer);
+        
+        `uvm_info("TEST", "========================================", UVM_NONE)
+        `uvm_info("TEST", "  Regression Complete - Check Results!", UVM_NONE)
+        `uvm_info("TEST", "========================================", UVM_NONE)
+    endtask
+
+endclass : regression_test
+
+`endif
+`ifndef AHB_SLAVE_SEQ_ITEM_SV
+`define AHB_SLAVE_SEQ_ITEM_SV
+
+class ahb_slave_seq_item extends uvm_sequence_item;
+    
+    // Response control (what slave will do)
+    rand int  wait_cycles;      // How many wait states to inject
+    rand bit  return_error;     // Should return ERROR response?
+    rand bit  ready_random;     // Random ready pattern?
+    
+    // Transaction info (observed from master)
+    bit [31:0]   addr;
+    bit          write;
+    bit [31:0]   write_data;
+    bit [31:0]   read_data;
+    bit [1:0]    trans_type;
+    
+    // Constraints
+    constraint c_wait_reasonable {
+        wait_cycles inside {[0:20]};
+    }
+    
+    constraint c_mostly_ok {
+        return_error dist {0 := 95, 1 := 5};  // 5% error rate
+    }
+    
+    `uvm_object_utils_begin(ahb_slave_seq_item)
+        `uvm_field_int(wait_cycles, UVM_DEFAULT | UVM_DEC)
+        `uvm_field_int(return_error, UVM_DEFAULT)
+        `uvm_field_int(addr, UVM_DEFAULT | UVM_HEX)
+        `uvm_field_int(write, UVM_DEFAULT)
+        `uvm_field_int(write_data, UVM_DEFAULT | UVM_HEX)
+        `uvm_field_int(read_data, UVM_DEFAULT | UVM_HEX)
+    `uvm_object_utils_end
+    
+    function new(string name = "ahb_slave_seq_item");
+        super.new(name);
+    endfunction
+
+endclass
+
+`endif
+`ifndef AHB_SLAVE_MEMORY_SV
+`define AHB_SLAVE_MEMORY_SV
+
+class ahb_slave_memory extends uvm_object;
+    
+    `uvm_object_utils(ahb_slave_memory)
+    
+    // Sparse memory (associative array)
+    bit [31:0] mem [bit [31:0]];
+    
+    // Configuration
+    bit [31:0] default_read_data = 32'hDEADBEEF;
+    bit log_accesses = 1;
+    
+    function new(string name = "ahb_slave_memory");
+        super.new(name);
+    endfunction
+    
+    // Write to memory
+    virtual function void write(bit [31:0] addr, bit [31:0] data);
+        mem[addr] = data;
+        if (log_accesses)
+            `uvm_info("SLAVE_MEM", $sformatf("WRITE [0x%08h] = 0x%08h", addr, data), UVM_HIGH)
+    endfunction
+    
+    // Read from memory
+    virtual function bit [31:0] read(bit [31:0] addr);
+        bit [31:0] data;
+        
+        if (mem.exists(addr)) begin
+            data = mem[addr];
+        end else begin
+            data = default_read_data;
+        end
+        
+        if (log_accesses)
+            `uvm_info("SLAVE_MEM", $sformatf("READ  [0x%08h] = 0x%08h %s", 
+                      addr, data, mem.exists(addr) ? "" : "(default)"), UVM_HIGH)
+        
+        return data;
+    endfunction
+    
+    // Initialize with pattern
+    virtual function void load_pattern(bit [31:0] start_addr, int num_words, bit [31:0] base_value);
+        for (int i = 0; i < num_words; i++) begin
+            mem[start_addr + (i*4)] = base_value + i;
+        end
+        `uvm_info("SLAVE_MEM", $sformatf("Loaded %0d words from 0x%08h", num_words, start_addr), UVM_MEDIUM)
+    endfunction
+    
+    // Clear all memory
+    virtual function void clear();
+        mem.delete();
+        `uvm_info("SLAVE_MEM", "Memory cleared", UVM_MEDIUM)
+    endfunction
+    
+    // Get memory statistics
+    virtual function void print_stats();
+        `uvm_info("SLAVE_MEM", $sformatf("Memory contains %0d entries", mem.size()), UVM_LOW)
+    endfunction
+
+endclass
+
+`endif
+`ifndef AHB_SLAVE_SEQUENCER_SV
+`define AHB_SLAVE_SEQUENCER_SV
+
+typedef uvm_sequencer #(ahb_slave_seq_item) ahb_slave_sequencer;
+
+`endif
+`ifndef AHB_SLAVE_AGENT_SV
+`define AHB_SLAVE_AGENT_SV
+
+class ahb_slave_agent extends uvm_agent;
+    
+    `uvm_component_utils(ahb_slave_agent)
+    
+    ahb_slave_driver     driver;
+    ahb_slave_monitor    monitor;
+    ahb_slave_sequencer  sequencer;
+    ahb_slave_config     cfg;
+    ahb_slave_memory     mem;
+    
+    uvm_analysis_port #(ahb_slave_seq_item) ap;
+    
+    function new(string name = "ahb_slave_agent", uvm_component parent = null);
+        super.new(name, parent);
+    endfunction
+    
+    function void build_phase(uvm_phase phase);
+        super.build_phase(phase);
+        
+        if (!uvm_config_db#(ahb_slave_config)::get(this, "", "cfg", cfg)) begin
+            `uvm_info("AGENT", "Creating default slave config", UVM_MEDIUM)
+            cfg = ahb_slave_config::type_id::create("cfg");
+        end
+        
+        if (!uvm_config_db#(ahb_slave_memory)::get(this, "", "mem", mem)) begin
+            `uvm_info("AGENT", "Creating default slave memory", UVM_MEDIUM)
+            mem = ahb_slave_memory::type_id::create("mem");
+        end
+        
+        monitor = ahb_slave_monitor::type_id::create("monitor", this);
+        
+        if (cfg.is_active == UVM_ACTIVE) begin
+            driver = ahb_slave_driver::type_id::create("driver", this);
+            sequencer = ahb_slave_sequencer::type_id::create("sequencer", this);
+        end
+        
+        uvm_config_db#(ahb_slave_config)::set(this, "*", "cfg", cfg);
+        uvm_config_db#(ahb_slave_memory)::set(this, "*", "mem", mem);
+    endfunction
+    
+    function void connect_phase(uvm_phase phase);
+        super.connect_phase(phase);
+        
+        if (cfg.is_active == UVM_ACTIVE)
+            driver.seq_item_port.connect(sequencer.seq_item_export);
+        
+        ap = monitor.ap;
+    endfunction
+
+endclass
+
+`endif
+package ahb_slave_pkg;
+    
+    import uvm_pkg::*;
+    import ahb_lite_pkg::*;
+    `include "uvm_macros.svh"
+    
+    `include "ahb_slave_memory.sv"
+    `include "ahb_slave_config.sv"
+    `include "ahb_slave_seq_item.sv"
+    `include "ahb_slave_sequencer.sv"
+    `include "ahb_slave_driver.sv"
+    `include "ahb_slave_monitor.sv"
+    `include "ahb_slave_agent.sv"
+    
+endpackage : ahb_slave_pkg
+`ifndef SLAVE_AHB_IF_SV
+`define SLAVE_AHB_IF_SV
+
+interface slave_ahb_if(input logic HCLK, input logic HRESETn);
+    
+    // Slave samples these (inputs)
+    logic [31:0]  HADDR;
+    logic [1:0]   HTRANS;
+    logic         HWRITE;
+    logic [2:0]   HSIZE;
+    logic [2:0]   HBURST;
+    logic [3:0]   HPROT;
+    logic [31:0]  HWDATA;
+    logic         HSEL;
+    logic         HREADY;
+    
+    // Slave drives these (outputs)
+    logic         HREADYOUT;
+    logic [31:0]  HRDATA;
+    logic         HRESP;
+    
+    // Slave driver clocking block
+    clocking slave_cb @(posedge HCLK);
+        default input #1step output #1step;
+        input  HADDR, HTRANS, HWRITE, HSIZE, HBURST, HPROT, HWDATA, HSEL, HREADY;
+        output HREADYOUT, HRDATA, HRESP;
+    endclocking
+    
+    // Monitor clocking block
+    clocking monitor_cb @(posedge HCLK);
+        default input #1step;
+        input HADDR, HTRANS, HWRITE, HSIZE, HBURST, HPROT, HWDATA, HSEL, HREADY;
+        input HREADYOUT, HRDATA, HRESP;
+    endclocking
+    
+endinterface
+
+`endif
+`ifndef AHB_SLAVE_CONFIG_SV
+`define AHB_SLAVE_CONFIG_SV
+
+class ahb_slave_config extends uvm_object;
+    
+    `uvm_object_utils(ahb_slave_config)
+    
+    // Basic config
+    bit is_active = 1;
+    
+    // Wait state configuration
+    typedef enum {
+        WAIT_ZERO,       // Always 0 wait states (fast)
+        WAIT_FIXED,      // Fixed number of waits
+        WAIT_RANDOM,     // Random in range
+        WAIT_PATTERN     // Specific pattern
+    } wait_mode_e;
+    
+    wait_mode_e wait_mode = WAIT_ZERO;
+    int fixed_wait_value = 0;
+    int min_wait = 0;
+    int max_wait = 5;
+    int wait_pattern[$];  // For patterned waits
+    
+    // Error injection
+    bit enable_errors = 0;
+    real error_probability = 0.0;  // 0.0 to 1.0
+    bit [31:0] error_addr_list[$];
+    
+    // Protocol checking
+    bit check_addr_stable = 1;
+    bit check_write_stable = 1;
+    
+    function new(string name = "ahb_slave_config");
+        super.new(name);
+    endfunction
+    
+    // Add error address
+    virtual function void add_error_addr(bit [31:0] addr);
+        error_addr_list.push_back(addr);
+        enable_errors = 1;
+        `uvm_info("SLAVE_CFG", $sformatf("Added error address: 0x%08h", addr), UVM_MEDIUM)
+    endfunction
+    
+    // Check if should return error
+    virtual function bit should_error(bit [31:0] addr);
+        if (!enable_errors) return 0;
+        
+        // Check specific addresses
+        foreach (error_addr_list[i]) begin
+            if (error_addr_list[i] == addr) return 1;
+        end
+        
+        // Random error injection
+        if (error_probability > 0.0) begin
+            int rand_val = $urandom_range(0, 1000);
+            if ((rand_val / 1000.0) < error_probability) return 1;
+        end
+        
+        return 0;
+    endfunction
+    
+    // Get wait cycles based on mode
+    virtual function int get_wait_cycles();
+        int cycles;
+        
+        case (wait_mode)
+            WAIT_ZERO: cycles = 0;
+            WAIT_FIXED: cycles = fixed_wait_value;
+            WAIT_RANDOM: cycles = $urandom_range(max_wait, min_wait);
+            WAIT_PATTERN: begin
+                if (wait_pattern.size() > 0) begin
+                    cycles = wait_pattern[0];
+                    wait_pattern.push_back(wait_pattern.pop_front());  // Rotate
+                end else begin
+                    cycles = 0;
+                end
+            end
+            default: cycles = 0;
+        endcase
+        
+        return cycles;
+    endfunction
+
+endclass
+`endif
+`ifndef AHB_SLAVE_DRIVER_SV
+`define AHB_SLAVE_DRIVER_SV
+
+class ahb_slave_driver extends uvm_driver #(ahb_slave_seq_item);
+    
+    `uvm_component_utils(ahb_slave_driver)
+    
+   // virtual ahb_lite_if vif;
+	virtual slave_ahb_if vif;
+    ahb_slave_config cfg;
+    ahb_slave_memory mem;
+    
+    function new(string name = "ahb_slave_driver", uvm_component parent = null);
+        super.new(name, parent);
+    endfunction
+    
+    function void build_phase(uvm_phase phase);
+        super.build_phase(phase);
+        
+        //if (!uvm_config_db#(virtual ahb_lite_if)::get(this, "", "vif", vif))
+	if (!uvm_config_db#(virtual slave_ahb_if)::get(this, "", "vif", vif))
+            `uvm_fatal("NOVIF", "Virtual interface not found")
+        
+        if (!uvm_config_db#(ahb_slave_config)::get(this, "", "cfg", cfg))
+            `uvm_fatal("NOCFG", "Slave config not found")
+        
+        if (!uvm_config_db#(ahb_slave_memory)::get(this, "", "mem", mem))
+            `uvm_fatal("NOMEM", "Slave memory not found")
+    endfunction
+    
+    task run_phase(uvm_phase phase);
+        @(posedge vif.HRESETn);
+        repeat(2) @(vif.slave_cb);
+        
+        `uvm_info("SLAVE_DRV", "Slave driver starting...", UVM_MEDIUM)
+        
+        vif.slave_cb.HREADYOUT <= 1'b1;
+        vif.slave_cb.HRESP <= 1'b0;
+        vif.slave_cb.HRDATA <= 32'h0;
+        
+        fork
+            capture_and_respond();
+        join
+    endtask
+    
+   task capture_and_respond();
+    bit [31:0] pending_addr;
+    bit        pending_write;
+    bit        have_pending;
+    int        wait_cycles;
+    bit        return_error;
+    bit [31:0] rdata;
+    
+    // Default: Always ready
+    vif.slave_cb.HREADYOUT <= 1'b1;
+    vif.slave_cb.HRESP <= 1'b0;
+    
+    forever begin
+        @(vif.slave_cb);
+        
+        // ========================================
+        // STATE 1: Complete pending data phase
+        // ========================================
+        if (have_pending) begin
+            
+            // ERROR RESPONSE: Two-cycle protocol
+            if (return_error) begin
+                // Cycle 1: HRESP=1, HREADYOUT=0
+                vif.slave_cb.HRESP <= 1'b1;
+                vif.slave_cb.HREADYOUT <= 1'b0;
+                vif.slave_cb.HRDATA <= 32'hDEADBEEF;
+                
+                `uvm_info("SLAVE_DRV", $sformatf("ERROR %s [0x%08h] cycle 1/2", 
+                          pending_write ? "WR" : "RD", pending_addr), UVM_MEDIUM)
+                
+                @(vif.slave_cb);
+                
+                // Cycle 2: HRESP=1, HREADYOUT=1
+                vif.slave_cb.HRESP <= 1'b1;
+                vif.slave_cb.HREADYOUT <= 1'b1;
+                
+                `uvm_info("SLAVE_DRV", $sformatf("ERROR %s [0x%08h] cycle 2/2", 
+                          pending_write ? "WR" : "RD", pending_addr), UVM_MEDIUM)
+                
+                // Clear pending and return to normal
+                have_pending = 0;
+                return_error = 0;
+                
+                // Next cycle: clear error
+                @(vif.slave_cb);
+                vif.slave_cb.HRESP <= 1'b0;
+                vif.slave_cb.HREADYOUT <= 1'b1;
+                
+            // NORMAL RESPONSE: Write or read
+            end else begin
+                if (pending_write) begin
+                    bit [31:0] wdata = vif.slave_cb.HWDATA;
+                    mem.write(pending_addr, wdata);
+                    `uvm_info("SLAVE_DRV", $sformatf("WRITE [0x%08h]=0x%08h", 
+                              pending_addr, wdata), UVM_MEDIUM)
+                end else begin
+                    rdata = mem.read(pending_addr);
+                    vif.slave_cb.HRDATA <= rdata;
+                    `uvm_info("SLAVE_DRV", $sformatf("READ  [0x%08h]=0x%08h", 
+                              pending_addr, rdata), UVM_MEDIUM)
+                end
+                
+                vif.slave_cb.HREADYOUT <= 1'b1;
+                vif.slave_cb.HRESP <= 1'b0;
+                have_pending = 0;
+            end
+        end
+        
+        // ========================================
+        // STATE 2: Capture new address phase
+        // ========================================
+        if (vif.slave_cb.HSEL && vif.slave_cb.HTRANS[1] && vif.slave_cb.HREADY) begin
+            pending_addr = vif.slave_cb.HADDR;
+            pending_write = vif.slave_cb.HWRITE;
+            wait_cycles = cfg.get_wait_cycles();
+            return_error = cfg.should_error(pending_addr);
+            have_pending = 1;
+            
+            `uvm_info("SLAVE_DRV", $sformatf("Captured: %s [0x%08h] waits=%0d err=%0b", 
+                      pending_write ? "WR" : "RD", pending_addr, wait_cycles, return_error), UVM_HIGH)
+            
+            // Handle wait states (only if no error)
+            if (wait_cycles > 0 && !return_error) begin
+                @(vif.slave_cb);
+                vif.slave_cb.HREADYOUT <= 1'b0;
+                vif.slave_cb.HRESP <= 1'b0;
+                
+                repeat(wait_cycles - 1) @(vif.slave_cb);
+                
+                @(vif.slave_cb);
+                vif.slave_cb.HREADYOUT <= 1'b1;
+                vif.slave_cb.HRESP <= 1'b0;
+            end
+            
+        end else if (!have_pending) begin
+            // No transaction - ensure ready
+            vif.slave_cb.HREADYOUT <= 1'b1;
+            vif.slave_cb.HRESP <= 1'b0;
+        end
+    end
+endtask
+endclass
+
+`endif
+`ifndef AHB_SLAVE_MONITOR_SV
+`define AHB_SLAVE_MONITOR_SV
+
+class ahb_slave_monitor extends uvm_monitor;
+    
+    `uvm_component_utils(ahb_slave_monitor)
+    
+    virtual slave_ahb_if vif;
+    uvm_analysis_port #(ahb_slave_seq_item) ap;
+    
+    bit [31:0] addr_phase_addr;
+    bit        addr_phase_write;
+    bit [1:0]  addr_phase_htrans;
+    bit        addr_phase_valid;
+    bit        in_data_phase;
+    int        wait_count;
+    bit [31:0] captured_wdata;
+    
+    function new(string name = "ahb_slave_monitor", uvm_component parent = null);
+        super.new(name, parent);
+        ap = new("ap", this);
+    endfunction
+    
+    function void build_phase(uvm_phase phase);
+        super.build_phase(phase);
+        if (!uvm_config_db#(virtual slave_ahb_if)::get(this, "", "vif", vif))
+            `uvm_fatal("NOVIF", "Virtual interface not found")
+    endfunction
+    
+    task run_phase(uvm_phase phase);
+        ahb_slave_seq_item txn;
+        bit captured_hresp;
+        
+        forever begin
+            @(vif.monitor_cb);  //  CHANGED: Use monitor_cb, not slave_cb
+            
+            if (!vif.HRESETn) begin
+                addr_phase_valid = 0;
+                in_data_phase = 0;
+                wait_count = 0;
+                continue;
+            end
+            
+            // STATE 1: Data phase completes
+            if (in_data_phase && vif.monitor_cb.HREADYOUT) begin  // â monitor_cb
+                captured_hresp = vif.monitor_cb.HRESP;  // â monitor_cb
+                
+                txn = ahb_slave_seq_item::type_id::create("txn");
+                txn.addr = addr_phase_addr;
+                txn.write = addr_phase_write;
+                txn.trans_type = addr_phase_htrans;
+                txn.wait_cycles = wait_count;
+                txn.return_error = captured_hresp;
+                
+                if (captured_hresp) begin
+                    if (addr_phase_write)
+                        txn.write_data = 32'hXXXXXXXX;
+                    else
+                        txn.read_data = 32'hXXXXXXXX;
+                    
+                    `uvm_info("SLAVE_MON", $sformatf("Observed ERROR: %s [0x%08h] = INVALID (waits=%0d)",
+                              addr_phase_write ? "WRITE" : "READ",
+                              addr_phase_addr, wait_count), UVM_MEDIUM)
+                end else begin
+                    if (addr_phase_write)
+                        txn.write_data = captured_wdata;
+                    else
+                        txn.read_data = vif.monitor_cb.HRDATA;  // â monitor_cb
+                    
+                    `uvm_info("SLAVE_MON", $sformatf("Observed: %s [0x%08h] = 0x%08h (waits=%0d)",
+                              addr_phase_write ? "WRITE" : "READ",
+                              addr_phase_addr, 
+                              addr_phase_write ? txn.write_data : txn.read_data,
+                              wait_count), UVM_MEDIUM)
+                end
+                
+                ap.write(txn);
+                
+                addr_phase_valid = 0;
+                in_data_phase = 0;
+                wait_count = 0;
+                
+                if (vif.monitor_cb.HSEL && vif.monitor_cb.HTRANS[1] && vif.monitor_cb.HREADY) begin  // â monitor_cb
+                    addr_phase_addr = vif.monitor_cb.HADDR;
+                    addr_phase_write = vif.monitor_cb.HWRITE;
+                    addr_phase_htrans = vif.monitor_cb.HTRANS;
+                    addr_phase_valid = 1;
+                    in_data_phase = 0;
+                end
+                
+            end else if (addr_phase_valid && !in_data_phase) begin
+                in_data_phase = 1;
+                wait_count = 0;
+                if (addr_phase_write)
+                    captured_wdata = vif.monitor_cb.HWDATA;  // â monitor_cb
+                
+            end else if (in_data_phase && !vif.monitor_cb.HREADYOUT) begin  // â monitor_cb
+                wait_count++;
+                
+            end else if (!addr_phase_valid &&
+                         vif.monitor_cb.HSEL &&      // 
+                         vif.monitor_cb.HTRANS[1] && // â monitor_cb
+                         vif.monitor_cb.HREADY) begin // â monitor_cb
+                addr_phase_addr = vif.monitor_cb.HADDR;    // â monitor_cb
+                addr_phase_write = vif.monitor_cb.HWRITE;  // â monitor_cb
+                addr_phase_htrans = vif.monitor_cb.HTRANS; // â monitor_cb
+                addr_phase_valid = 1;
+                in_data_phase = 0;
+                wait_count = 0;
+            end
+        end
+    endtask
+    
+endclass
+
+`endif
+`ifndef MASTER_WRITE_TEST_SV
+`define MASTER_WRITE_TEST_SV
+
+class master_write_test extends base_master_test;
+    
+    `uvm_component_utils(master_write_test)
+    
+    function new(string name = "master_write_test", uvm_component parent = null);
+        super.new(name, parent);
+    endfunction
+    
+    task run_test_sequence();
+        ahb_lite_write_seq master_seq;
+        
+        `uvm_info("TEST", "================================================", UVM_NONE)
+        `uvm_info("TEST", "  MASTER VIP WRITE VERIFICATION TEST", UVM_NONE)
+        `uvm_info("TEST", "================================================", UVM_NONE)
+        
+        // Issue writes from master, slave will respond
+        master_seq = ahb_lite_write_seq::type_id::create("master_seq");
+        assert(master_seq.randomize() with {
+            start_addr == 32'h0000_2000;
+            num_writes == 5;
+            data_pattern == 32'hCAFE0000;
+        });
+        
+        `uvm_info("TEST", "Starting 20 write transactions...", UVM_LOW)
+        master_seq.start(env.master_agent.sequencer);
+        
+        `uvm_info("TEST", "Write test complete", UVM_NONE)
+    endtask
+
+endclass
+
+`endif
+`ifndef MASTER_MIXED_TEST_SV
+`define MASTER_MIXED_TEST_SV
+
+class master_mixed_test extends base_master_test;
+    
+    `uvm_component_utils(master_mixed_test)
+    
+    function new(string name = "master_mixed_test", uvm_component parent = null);
+        super.new(name, parent);
+    endfunction
+    
+    task run_test_sequence();
+        ahb_lite_write_seq write_seq;
+        ahb_lite_read_seq  read_seq;
+        ahb_lite_rwr_seq   rwr_seq;
+        
+        `uvm_info("TEST", "================================================", UVM_NONE)
+        `uvm_info("TEST", "  MASTER VIP MIXED READ/WRITE TEST", UVM_NONE)
+        `uvm_info("TEST", "================================================", UVM_NONE)
+        
+        // Write some data
+        write_seq = ahb_lite_write_seq::type_id::create("write_seq");
+        assert(write_seq.randomize() with {
+            start_addr == 32'h0000_3000;
+            num_writes == 10;
+            data_pattern == 32'hDEAD0000;
+        });
+        write_seq.start(env.master_agent.sequencer);
+        
+        // Read it back
+        read_seq = ahb_lite_read_seq::type_id::create("read_seq");
+        assert(read_seq.randomize() with {
+            start_addr == 32'h0000_3000;
+            num_reads == 10;
+        });
+        read_seq.start(env.master_agent.sequencer);
+        
+        // Read-write-read patterns
+        repeat(5) begin
+            rwr_seq = ahb_lite_rwr_seq::type_id::create("rwr_seq");
+            assert(rwr_seq.randomize() with {
+                test_addr inside {[32'h3000:32'h3100]};
+            });
+            rwr_seq.start(env.master_agent.sequencer);
+        end
+        
+        `uvm_info("TEST", "Mixed test complete", UVM_NONE)
+    endtask
+
+endclass
+
+`endif
+`ifndef MASTER_ERROR_TEST_SV
+`define MASTER_ERROR_TEST_SV
+
+class master_error_test extends base_master_test;
+    
+    `uvm_component_utils(master_error_test)
+    
+    function new(string name = "master_error_test", uvm_component parent = null);
+        super.new(name, parent);
+    endfunction
+    
+    function void build_phase(uvm_phase phase);
+        ahb_slave_config slave_cfg;
+        
+        // Create and configure slave_cfg BEFORE building env
+        slave_cfg = ahb_slave_config::type_id::create("slave_cfg");
+        slave_cfg.is_active = UVM_ACTIVE;
+        slave_cfg.wait_mode = ahb_slave_config::WAIT_RANDOM;
+        slave_cfg.min_wait = 0;
+        slave_cfg.max_wait = 3;
+        
+        // Add error addresses
+       // slave_cfg.add_error_addr(32'h0000_2000);
+        slave_cfg.add_error_addr(32'h0000_2004);
+        //slave_cfg.add_error_addr(32'h0000_2008);
+        
+        // Put it in config_db so env picks it up
+        uvm_config_db#(ahb_slave_config)::set(this, "env.slave_agent*", "cfg", slave_cfg);
+        
+        // NOW build the env (it will retrieve our configured slave_cfg)
+        super.build_phase(phase);
+    endfunction
+    
+    task run_test_sequence();
+        ahb_lite_read_seq master_seq;
+        
+        `uvm_info("TEST", "================================================", UVM_NONE)
+        `uvm_info("TEST", "  MASTER VIP ERROR RESPONSE TEST", UVM_NONE)
+        `uvm_info("TEST", "  Slave will return ERROR at specific addresses", UVM_NONE)
+        `uvm_info("TEST", "================================================", UVM_NONE)
+        
+        master_seq = ahb_lite_read_seq::type_id::create("master_seq");
+        assert(master_seq.randomize() with {
+            start_addr == 32'h0000_2000;
+            num_reads == 10;
+        });
+        
+        `uvm_info("TEST", "Starting reads (some will error)...", UVM_LOW)
+        master_seq.start(env.master_agent.sequencer);
+        
+        `uvm_info("TEST", "Error test complete", UVM_NONE)
+    endtask
+    
+endclass
+
+`endif
+`ifndef MASTER_WAIT_STRESS_TEST_SV
+`define MASTER_WAIT_STRESS_TEST_SV
+
+class master_wait_stress_test extends base_master_test;
+    
+    `uvm_component_utils(master_wait_stress_test)
+    
+    function new(string name = "master_wait_stress_test", uvm_component parent = null);
+        super.new(name, parent);
+    endfunction
+    
+    function void build_phase(uvm_phase phase);
+        ahb_slave_config slave_cfg;
+        
+        // Create and configure BEFORE building env
+        slave_cfg = ahb_slave_config::type_id::create("slave_cfg");
+        slave_cfg.is_active = UVM_ACTIVE;
+        slave_cfg.wait_mode = ahb_slave_config::WAIT_RANDOM;
+        slave_cfg.min_wait = 10;
+        slave_cfg.max_wait = 50;
+        
+        // Put in config_db
+        uvm_config_db#(ahb_slave_config)::set(this, "env.slave_agent*", "cfg", slave_cfg);
+        
+        // NOW build the env
+        super.build_phase(phase);
+    endfunction
+    
+    task run_test_sequence();
+        ahb_lite_read_seq master_seq;
+        
+        `uvm_info("TEST", "================================================", UVM_NONE)
+        `uvm_info("TEST", "  MASTER VIP WAIT STATE STRESS TEST", UVM_NONE)
+        `uvm_info("TEST", "  Slave will inject 10-50 wait states", UVM_NONE)
+        `uvm_info("TEST", "================================================", UVM_NONE)
+        
+        master_seq = ahb_lite_read_seq::type_id::create("master_seq");
+        assert(master_seq.randomize() with {
+            start_addr == 32'h0000_1000;
+            num_reads == 10;
+        });
+        
+        `uvm_info("TEST", "Starting reads with heavy wait states...", UVM_LOW)
+        master_seq.start(env.master_agent.sequencer);
+        
+        `uvm_info("TEST", "Wait stress test complete", UVM_NONE)
+    endtask
+    
+endclass
+
+`endif
+`ifndef BASE_MASTER_TEST_SV
+`define BASE_MASTER_TEST_SV
+
+class base_master_test extends uvm_test;
+    
+    `uvm_component_utils(base_master_test)
+    
+    master_verification_env env;
+   // virtual master_ahb_if vif;
+ahb_slave_config slave_cfg;
+    
+    function new(string name = "base_master_test", uvm_component parent = null);
+        super.new(name, parent);
+    endfunction
+    
+    function void build_phase(uvm_phase phase);
+        super.build_phase(phase);
+        env = master_verification_env::type_id::create("env", this);
+        
+        // Get master interface from config_db
+       // if (!uvm_config_db#(virtual master_ahb_if)::get(this, "", "vif", vif))
+        //    `uvm_fatal("NOVIF", "Virtual interface not found in test")
+
+	slave_cfg = ahb_slave_config::type_id::create("slave_cfg");
+    slave_cfg.wait_mode = ahb_slave_config::WAIT_ZERO;  // â KEY LINE!
+    
+    uvm_config_db#(ahb_slave_config)::set(this, "slave_agent*", "cfg", slave_cfg);
+    
+    `uvm_info("ENV", "Configured slave with ZERO wait states", UVM_MEDIUM)
+    endfunction
+    
+    task run_phase(uvm_phase phase);
+        phase.raise_objection(this);
+        
+        // Wait for reset to be released
+       // wait(vif.HRESETn == 1'b1);
+      //  repeat(20) @(posedge vif.HCLK);
+       
+ 	#200ns;
+
+        `uvm_info("TEST", "Starting test sequence after reset...", UVM_LOW)
+        
+        run_test_sequence();
+        
+        // Settle time
+       // repeat(50) @(posedge vif.HCLK);
+        #500ns;
+        phase.drop_objection(this);
+    endtask
+    
+    virtual task run_test_sequence();
+        // Override in derived tests
+    endtask
+
+endclass
+
+`endif
+`ifndef MASTER_READ_TEST_SV
+`define MASTER_READ_TEST_SV
+
+class master_read_test extends base_master_test;
+    
+    `uvm_component_utils(master_read_test)
+    
+    function new(string name = "master_read_test", uvm_component parent = null);
+        super.new(name, parent);
+    endfunction
+ function void build_phase(uvm_phase phase);
+        ahb_slave_config slave_cfg;
+        
+        // Create and configure BEFORE building env
+        slave_cfg = ahb_slave_config::type_id::create("slave_cfg");
+        slave_cfg.is_active = UVM_ACTIVE;
+        slave_cfg.wait_mode = ahb_slave_config::WAIT_ZERO;
+        slave_cfg.min_wait = 0;
+        slave_cfg.max_wait = 0;
+        
+        // Put in config_db
+        uvm_config_db#(ahb_slave_config)::set(this, "env.slave_agent*", "cfg", slave_cfg);
+        
+        // NOW build the env
+        super.build_phase(phase);
+    endfunction
+
+    
+    task run_test_sequence();
+        ahb_lite_read_seq master_seq;
+        
+        `uvm_info("TEST", "================================================", UVM_NONE)
+        `uvm_info("TEST", "  MASTER VIP READ VERIFICATION TEST", UVM_NONE)
+        `uvm_info("TEST", "================================================", UVM_NONE)
+        
+        master_seq = ahb_lite_read_seq::type_id::create("master_seq");
+        assert(master_seq.randomize() with {
+            start_addr == 32'h0000_1000;  // From pre-loaded memory
+            num_reads == 10;
+        });
+        
+        `uvm_info("TEST", "Starting 20 read transactions...", UVM_LOW)
+        master_seq.start(env.master_agent.sequencer);
+        
+        `uvm_info("TEST", "Read test complete", UVM_NONE)
+    endtask
+
+endclass
+
+`endif
+`ifndef MASTER_FUNCTIONAL_CHECKER_SV
+`define MASTER_FUNCTIONAL_CHECKER_SV
+
+class master_functional_checker extends uvm_scoreboard;
+    
+    `uvm_component_utils(master_functional_checker)
+    
+    uvm_analysis_export #(ahb_lite_seq_item) master_export;
+    uvm_analysis_export #(ahb_slave_seq_item) slave_export;
+    
+    uvm_tlm_analysis_fifo #(ahb_lite_seq_item) master_fifo;
+    uvm_tlm_analysis_fifo #(ahb_slave_seq_item) slave_fifo;
+    
+    int reads = 0;
+    int writes = 0;
+    int errors = 0;
+    int mismatches = 0;
+    int match_count = 0;
+    
+    function new(string name = "master_functional_checker", uvm_component parent = null);
+        super.new(name, parent);
+        master_export = new("master_export", this);
+        slave_export = new("slave_export", this);
+        master_fifo = new("master_fifo", this);
+        slave_fifo = new("slave_fifo", this);
+    endfunction
+    
+    function void connect_phase(uvm_phase phase);
+        super.connect_phase(phase);
+        master_export.connect(master_fifo.analysis_export);
+        slave_export.connect(slave_fifo.analysis_export);
+    endfunction
+
+    task run_phase(uvm_phase phase);
+        ahb_lite_seq_item  master_txn;
+        ahb_slave_seq_item slave_txn;
+        bit txn_ok;
+
+        forever begin
+            fork
+                master_fifo.get(master_txn);
+                slave_fifo.get(slave_txn);
+            join
+
+            txn_ok = 1;
+
+            // Address check
+            if (master_txn.addr !== slave_txn.addr) begin
+                `uvm_error("FUNC_CHK", $sformatf(
+                    "Address mismatch: M=0x%08h, S=0x%08h",
+                    master_txn.addr, slave_txn.addr))
+                mismatches++; txn_ok = 0;
+            end
+
+            // Direction check
+            if (master_txn.write !== slave_txn.write) begin
+                `uvm_error("FUNC_CHK", $sformatf(
+                    "Type mismatch at 0x%08h", master_txn.addr))
+                mismatches++; txn_ok = 0;
+            end
+
+            // Error response check (check FIRST before data!)
+            if (slave_txn.return_error) begin
+                errors++;
+                if (master_txn.resp !== ahb_hresp_e'(1)) begin
+                    `uvm_error("FUNC_CHK", $sformatf(
+                        "Slave signalled ERROR at 0x%08h but master saw OKAY",
+                        master_txn.addr))
+                    mismatches++;
+                    txn_ok = 0;
+                end
+                // For ERROR transactions, SKIP data comparison (data is invalid!)
+                `uvm_info("FUNC_CHK", $sformatf(
+                    "ERROR transaction at 0x%08h - data not compared",
+                    master_txn.addr), UVM_HIGH)
+            end else if (master_txn.resp === ahb_hresp_e'(1)) begin
+                `uvm_error("FUNC_CHK", $sformatf(
+                    "Spurious ERROR at 0x%08h: master saw ERROR but slave did not flag it",
+                    master_txn.addr))
+                mismatches++;
+                txn_ok = 0;
+            end else begin
+                // OKAY response - check data
+                if (master_txn.write) begin
+                    writes++;
+                    if (master_txn.data !== slave_txn.write_data) begin
+                        `uvm_error("FUNC_CHK", $sformatf(
+                            "Write data mismatch at 0x%08h: M=0x%08h, S=0x%08h",
+                            master_txn.addr, master_txn.data, slave_txn.write_data))
+                        mismatches++; txn_ok = 0;
+                    end
+                end else begin
+                    reads++;
+                    if (master_txn.data !== slave_txn.read_data) begin
+                        `uvm_error("FUNC_CHK", $sformatf(
+                            "Read data mismatch at 0x%08h: M=0x%08h, S=0x%08h",
+                            master_txn.addr, master_txn.data, slave_txn.read_data))
+                        mismatches++; txn_ok = 0;
+                    end
+                end
+            end
+
+            if (txn_ok) match_count++;
+        end
+    endtask
+
+    function void check_phase(uvm_phase phase);
+        super.check_phase(phase);
+        if (master_fifo.used() > 0)
+            `uvm_error("FUNC_CHK", $sformatf(
+                "%0d master txn(s) unmatched slave never responded",
+                master_fifo.used()))
+        if (slave_fifo.used() > 0)
+            `uvm_error("FUNC_CHK", $sformatf(
+                "%0d slave txn(s) unmatched master never drove them",
+                slave_fifo.used()))
+    endfunction
+
+    function void report_phase(uvm_phase phase);
+        super.report_phase(phase);
+        
+        `uvm_info("FUNC_REPORT", "============================================", UVM_NONE)
+        `uvm_info("FUNC_REPORT", "  Master VIP Functional Report", UVM_NONE)
+        `uvm_info("FUNC_REPORT", "============================================", UVM_NONE)
+        `uvm_info("FUNC_REPORT", $sformatf("Reads:  %0d", reads), UVM_NONE)
+        `uvm_info("FUNC_REPORT", $sformatf("Writes: %0d", writes), UVM_NONE)
+        `uvm_info("FUNC_REPORT", $sformatf("Errors: %0d", errors), UVM_NONE)
+        `uvm_info("FUNC_REPORT", $sformatf("Matches: %0d", match_count), UVM_NONE)
+        `uvm_info("FUNC_REPORT", $sformatf("Mismatches: %0d", mismatches), UVM_NONE)
+        
+        if (mismatches == 0) begin
+            `uvm_info("FUNC_REPORT", "â ALL TRANSACTIONS MATCHED!", UVM_NONE)
+        end else begin
+            `uvm_error("FUNC_REPORT", "â DATA MISMATCHES DETECTED!")
+        end
+        
+        `uvm_info("FUNC_REPORT", "============================================", UVM_NONE)
+    endfunction
+
+endclass
+
+`endif
+`ifndef MASTER_PROTOCOL_CHECKER_SV
+`define MASTER_PROTOCOL_CHECKER_SV
+
+class master_protocol_checker extends uvm_scoreboard;
+    
+    `uvm_component_utils(master_protocol_checker)
+    
+    // Analysis import for master transactions
+    uvm_analysis_imp #(ahb_lite_seq_item, master_protocol_checker) master_imp;
+    
+    ahb_lite_config cfg;
+    
+    int violations = 0;
+    int addr_violations = 0;
+    int write_violations = 0;
+    int timeout_count = 0;
+    
+    function new(string name = "master_protocol_checker", uvm_component parent = null);
+        super.new(name, parent);
+        master_imp = new("master_imp", this);
+    endfunction
+    
+    function void build_phase(uvm_phase phase);
+        super.build_phase(phase);
+        if (!uvm_config_db#(ahb_lite_config)::get(this, "", "cfg", cfg)) begin
+            `uvm_info("PROTO_CHK", "cfg not found in config_db using default ahb_lite_config", UVM_MEDIUM)
+            cfg = ahb_lite_config::type_id::create("cfg");
+        end
+    endfunction
+    
+    function void write(ahb_lite_seq_item txn);
+        // Protocol checks happen in the monitor
+        // This scoreboard just receives transactions for reporting
+        
+        // Could add checks here if needed:
+        // - Check for timeout (wait_cycles > cfg.max_wait_cycles)
+        // - Check for ERROR response handling
+        // etc.
+    endfunction
+    
+    function void report_phase(uvm_phase phase);
+        super.report_phase(phase);
+        
+        `uvm_info("PROTO_REPORT", "============================================", UVM_NONE)
+        `uvm_info("PROTO_REPORT", "  Master VIP Protocol Compliance Report", UVM_NONE)
+        `uvm_info("PROTO_REPORT", "============================================", UVM_NONE)
+        `uvm_info("PROTO_REPORT", $sformatf("Total Violations:          %0d", violations), UVM_NONE)
+        `uvm_info("PROTO_REPORT", $sformatf("  HADDR changed during wait:  %0d", addr_violations), UVM_NONE)
+        `uvm_info("PROTO_REPORT", $sformatf("  HWRITE changed during wait: %0d", write_violations), UVM_NONE)
+        `uvm_info("PROTO_REPORT", $sformatf("  Wait timeout count:         %0d", timeout_count), UVM_NONE)
+        
+        if (violations == 0) begin
+            `uvm_info("PROTO_REPORT", "MASTER VIP IS PROTOCOL COMPLIANT!", UVM_NONE)
+        end
+        
+        `uvm_info("PROTO_REPORT", "============================================", UVM_NONE)
+    endfunction
+
+endclass
+
+`endif
+`ifndef MASTER_VERIFICATION_ENV_SV
+`define MASTER_VERIFICATION_ENV_SV
+
+class master_verification_env extends uvm_env;
+    
+    `uvm_component_utils(master_verification_env)
+    
+    // Master VIP (DUT - what we're testing!)
+    ahb_lite_agent master_agent;
+    ahb_lite_config master_cfg;
+    
+    // Slave VIP (programmable responder)
+    ahb_slave_agent slave_agent;
+    ahb_slave_config slave_cfg;
+    ahb_slave_memory slave_mem;
+    
+    // Scoreboards
+    master_protocol_checker protocol_sb;
+    master_functional_checker func_sb;
+    
+    function new(string name = "master_verification_env", uvm_component parent = null);
+        super.new(name, parent);
+    endfunction
+    
+    function void build_phase(uvm_phase phase);
+        super.build_phase(phase);
+        
+        // Configure MASTER VIP (as DUT)
+        master_cfg = ahb_lite_config::type_id::create("master_cfg");
+        master_cfg.is_active = UVM_ACTIVE;
+        master_cfg.agent_mode = AHB_MASTER;
+        master_cfg.max_wait_cycles = 200;
+        uvm_config_db#(ahb_lite_config)::set(this, "master_agent*", "cfg", master_cfg);
+        
+        // Configure SLAVE VIP
+        slave_cfg = ahb_slave_config::type_id::create("slave_cfg");
+        slave_cfg.is_active = UVM_ACTIVE;
+        // Default: random waits 0-5 cycles
+        slave_cfg.wait_mode = ahb_slave_config::WAIT_RANDOM;
+        slave_cfg.min_wait = 0;
+        slave_cfg.max_wait = 5;
+        uvm_config_db#(ahb_slave_config)::set(this, "slave_agent*", "cfg", slave_cfg);
+        
+        // Create memory model
+        slave_mem = ahb_slave_memory::type_id::create("slave_mem");
+        slave_mem.load_pattern(32'h1000, 256, 32'hA5A50000);  // Test pattern
+        uvm_config_db#(ahb_slave_memory)::set(this, "slave_agent*", "mem", slave_mem);
+        
+        // Create agents
+        master_agent = ahb_lite_agent::type_id::create("master_agent", this);
+        slave_agent = ahb_slave_agent::type_id::create("slave_agent", this);
+        
+        // Create scoreboards
+        protocol_sb = master_protocol_checker::type_id::create("protocol_sb", this);
+        func_sb = master_functional_checker::type_id::create("func_sb", this);
+    endfunction
+    
+    function void connect_phase(uvm_phase phase);
+        super.connect_phase(phase);
+        
+        // Connect master monitor to scoreboards
+        master_agent.ap.connect(protocol_sb.master_imp);
+        master_agent.ap.connect(func_sb.master_export);
+        
+        // Connect slave monitor to scoreboards
+        slave_agent.ap.connect(func_sb.slave_export);
+    endfunction
+    
+    function void end_of_elaboration_phase(uvm_phase phase);
+        super.end_of_elaboration_phase(phase);
+        `uvm_info("ENV", "Master VIP Verification Environment Built", UVM_LOW)
+        `uvm_info("ENV", $sformatf("  Master Agent: %s", master_agent.get_full_name()), UVM_LOW)
+        `uvm_info("ENV", $sformatf("  Slave Agent:  %s", slave_agent.get_full_name()), UVM_LOW)
+    endfunction
+
+endclass
+
+`endif
+`timescale 1ns/1ps
+
+module master_verification_tb_top;
+    
+    import uvm_pkg::*;
+    import ahb_lite_pkg::*;
+    import ahb_slave_pkg::*;
+    `include "uvm_macros.svh"
+    
+    // Include scoreboards
+    `include "scoreboards/master_protocol_checker.sv"
+    `include "scoreboards/master_functional_checker.sv"
+    
+    // Include environment
+    `include "master_verification_env.sv"
+    
+    // Include tests
+    `include "tests/base_master_test.sv"
+    `include "tests/master_write_test.sv"
+    `include "tests/master_read_test.sv"
+    `include "tests/master_wait_stress_test.sv"
+    `include "tests/master_error_test.sv"
+    `include "tests/master_mixed_test.sv"
+    
+    // ========================================
+    // CLOCK AND RESET
+    // ========================================
+    logic HCLK;
+    logic HRESETn;
+    
+    initial begin
+        HCLK = 0;
+        forever #5 HCLK = ~HCLK;
+    end
+    
+    initial begin
+        HRESETn = 0;
+        repeat(5) @(posedge HCLK);
+        HRESETn = 1;
+        `uvm_info("TB_TOP", "Reset released", UVM_LOW)
+    end
+    
+    // ========================================
+    // TWO INDEPENDENT INTERFACES 
+    // ========================================
+    master_ahb_if master_if(HCLK, HRESETn);
+    slave_ahb_if  slave_if(HCLK, HRESETn);
+    
+    // ========================================
+    // WIRE CONNECTIONS (Connect the two VIPs)
+    // ========================================
+    
+    // Master- Slave (Address phase)
+    assign slave_if.HADDR   = master_if.HADDR;
+    assign slave_if.HTRANS  = master_if.HTRANS;
+    assign slave_if.HWRITE  = master_if.HWRITE;
+    assign slave_if.HSIZE   = master_if.HSIZE;
+    assign slave_if.HBURST  = master_if.HBURST;
+    assign slave_if.HPROT   = master_if.HPROT;
+    assign slave_if.HSEL    = master_if.HSEL;
+    
+    // Master- Slave (Data phase)
+    assign slave_if.HWDATA  = master_if.HWDATA;
+    
+    // Slave- Master (Response)
+    assign master_if.HRDATA    = slave_if.HRDATA;
+    assign master_if.HREADYOUT = slave_if.HREADYOUT;
+    assign master_if.HRESP     = slave_if.HRESP;
+    
+    // HREADY connections
+    assign slave_if.HREADY  = slave_if.HREADYOUT;
+    assign master_if.HREADY = slave_if.HREADYOUT;
+    
+    // ========================================
+    // UVM CONFIGURATION (KEY CHANGE!)
+    // ========================================
+    initial begin
+        // Pass SEPARATE interfaces to each VIP
+        uvm_config_db#(virtual master_ahb_if)::set(null, "*.master_agent*", "vif", master_if);
+        uvm_config_db#(virtual slave_ahb_if)::set(null, "*.slave_agent*", "vif", slave_if);
+       // uvm_config_db#(virtual master_ahb_if)::set(null, "uvm_test_top", "vif", master_if);
+        run_test();
+    end
+    
+    // Timeout
+    initial begin
+        #500000;
+        `uvm_error("TB_TOP", "Test timeout!")
+        $finish;
+    end
+    
+    // Waveform dumping
+    initial begin
+        $dumpfile("master_verification.vcd");
+        $dumpvars(0, master_verification_tb_top);
+    end
+
+endmodule

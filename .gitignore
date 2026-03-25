@@ -1,0 +1,9 @@
+work/
+waves/
+*.wlf
+*.vstf
+*.log
+modelsim.ini
+transcript
+*.bak
+*.backup
