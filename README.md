@@ -1,87 +1,114 @@
 # AHB-Lite VIP Development
 
-Complete UVM-based Verification IP for AHB-Lite protocol with independent Master and Slave components.
+Complete UVM-based Verification IP for AHB-Lite protocol
+with independent Master and Slave VIP components.
 
-## ðï¸ Architecture
-```
-ahb_lite_vip_project/
-âââ vip/                    # Master VIP (Producer)
-â   âââ src/
-â   â   âââ ahb_lite_if.sv
-â   â   âââ ahb_lite_seq_item.sv
-â   â   âââ ahb_lite_driver.sv
-â   â   âââ ahb_lite_monitor.sv
-â   â   âââ ahb_lite_agent.sv
-â   â   âââ sequences/
-â   âââ ahb_lite_pkg.sv
-â
-âââ slave_vip/              # Slave VIP (Consumer)
-â   âââ src/
-â   â   âââ ahb_slave_if.sv
-â   â   âââ ahb_slave_seq_item.sv
-â   â   âââ ahb_slave_driver.sv
-â   â   âââ ahb_slave_monitor.sv
-â   â   âââ ahb_slave_agent.sv
-â   â   âââ ahb_slave_memory.sv
-â   âââ ahb_slave_pkg.sv
-â
-âââ verification_tb/        # Testbench
-â   âââ master_verification_env.sv
-â   âââ master_verification_tb_top.sv
-â   âââ scoreboards/
-â   âââ tests/
-â
-âââ sim/                    # Simulation scripts
-    âââ Makefile
-    âââ run.sh
-```
+---
 
-## â¨ Features
+## Architecture
 
-- â Independent Master & Slave VIP packages
-- â Zero-wait state mode for max performance
-- â Configurable wait state injection
-- â Error response handling (2-cycle protocol)
-- â Protocol checking & functional scoreboards
-- â Pipelined transaction support
-- â UVM RAL integration ready
+    ahb_lite_vip_project/
+    |-- vip/                        (Master VIP - Producer)
+    |   |-- src/
+    |       |-- ahb_lite_if.sv
+    |       |-- ahb_lite_seq_item.sv
+    |       |-- ahb_lite_config.sv
+    |       |-- ahb_lite_driver.sv
+    |       |-- ahb_lite_monitor.sv
+    |       |-- ahb_lite_agent.sv
+    |       |-- ahb_lite_pkg.sv
+    |       |-- sequences/
+    |           |-- ahb_lite_base_seq.sv
+    |           |-- ahb_lite_write_seq.sv
+    |           |-- ahb_lite_read_seq.sv
+    |           |-- ahb_lite_rwr_seq.sv
+    |
+    |-- slave_vip/                  (Slave VIP - Consumer)
+    |   |-- src/
+    |       |-- ahb_slave_if.sv
+    |       |-- ahb_slave_seq_item.sv
+    |       |-- ahb_slave_config.sv
+    |       |-- ahb_slave_memory.sv
+    |       |-- ahb_slave_driver.sv
+    |       |-- ahb_slave_monitor.sv
+    |       |-- ahb_slave_agent.sv
+    |       |-- ahb_slave_pkg.sv
+    |
+    |-- verification_tb/            (Testbench)
+    |   |-- master_verification_env.sv
+    |   |-- master_verification_tb_top.sv
+    |   |-- scoreboards/
+    |   |   |-- master_functional_checker.sv
+    |   |   |-- master_protocol_checker.sv
+    |   |-- tests/
+    |       |-- base_master_test.sv
+    |       |-- master_write_test.sv
+    |       |-- master_read_test.sv
+    |       |-- master_rwr_test.sv
+    |
+    |-- sim/
+        |-- Makefile
 
-## ð Quick Start
-```bash
-# Compile and run tests
-cd sim
-make master_read_verif
-```
+---
 
-## ð Performance
+## Features
 
-- **Zero-wait mode**: 10 reads in ~200ns (2 cycles/transaction)
-- **55% of theoretical AHB maximum throughput**
-- **100% AHB protocol compliant**
+- Independent Master and Slave VIP packages
+- Zero-wait state mode for maximum performance
+- Configurable wait state injection
+- Error response handling (2-cycle protocol)
+- Protocol checking and functional scoreboards
+- Pipelined transaction support
+- UVM RAL integration ready
 
-## ð Test Suite
+---
 
-1. `master_read_test` - Read verification
-2. `master_write_test` - Write verification  
-3. `master_rw_test` - Read-write sequences
-4. `master_error_test` - Error response handling
-5. `master_long_test` - Extended stress test
+## Quick Start
 
-## ð§ Configuration
-```systemverilog
-// Zero-wait state mode (fast)
-slave_cfg.wait_mode = ahb_slave_config::WAIT_ZERO;
+    cd sim
+    make master_read_verif
 
-// Random wait states (realistic)
-slave_cfg.wait_mode = ahb_slave_config::WAIT_RANDOM;
-slave_cfg.min_wait = 0;
-slave_cfg.max_wait = 5;
-```
+---
 
-## ð Documentation
+## Performance
 
-See `AHB_LITE_VIP_DEVELOPMENT_GUIDE.md` for detailed architecture and usage.
+| Metric              | Value                                  |
+|---------------------|----------------------------------------|
+| Zero-wait mode      | 10 reads in ~200ns (2 cycles per txn) |
+| Throughput          | 55% of theoretical AHB maximum        |
+| Protocol compliance | 100% AHB compliant                     |
 
-## ð¤ Author
+---
+
+## Test Suite
+
+1. master_read_test   - Read verification
+2. master_write_test  - Write verification
+3. master_rw_test     - Read-write sequences
+4. master_error_test  - Error response handling
+5. master_long_test   - Extended stress test
+
+---
+
+## Configuration
+
+    // Zero-wait state mode (fast)
+    slave_cfg.wait_mode = ahb_slave_config::WAIT_ZERO;
+
+    // Random wait states (realistic)
+    slave_cfg.wait_mode = ahb_slave_config::WAIT_RANDOM;
+    slave_cfg.min_wait  = 0;
+    slave_cfg.max_wait  = 5;
+
+---
+
+## Documentation
+
+See AHB_LITE_VIP_DEVELOPMENT_GUIDE.md for detailed architecture and usage.
+
+---
+
+## Author
 
 Neha Dhabale
+
